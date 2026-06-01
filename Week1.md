@@ -63,22 +63,7 @@ We will explore this in detail in Week 5. For now just know that all 12 servos a
 
 ---
 
-## 4. Power On / Off
-
-### Powering On
-1. Place the Mini Pupper on a flat surface with legs clear of obstacles
-2. Confirm battery is charged and connected
-3. Flip the power switch — the Pi will begin booting (green LED on Pi will blink)
-4. Wait ~60 seconds for the Pi to fully boot before attempting SSH
-
-### Powering Off
-1. SSH in and run `sudo shutdown now` before cutting power
-2. Wait for the Pi's green LED to stop blinking, then flip the power switch
-3. Disconnect and charge the battery after each session
-
----
-
-## 5. WiFi Setup
+## 4. WiFi Setup
 
 The Mini Pupper communicates over WiFi. You need to get it on your local network before anything else.
 
@@ -117,11 +102,11 @@ Note the IP — you'll need it for SSH.
 
 ---
 
-## 6. SSH Setup
+## 5. SSH Setup
 
 SSH (Secure Shell) is a network protocol that lets you remotely access and control another computer over a network connection. When you run `ssh ubuntu@192.168.x.x` you authenticate with the remote machine and get placed into its shell session — any commands you run execute on the Pi, not your laptop.
 
-### 6.1 Enable SSH on the Pi (first time only)
+### 5.1 Enable SSH on the Pi (first time only)
 On the Pi directly:
 ```bash
 sudo apt install openssh-server -y
@@ -129,13 +114,13 @@ sudo systemctl enable ssh
 sudo systemctl start ssh
 ```
 
-### 6.2 SSH in from your PC
+### 5.2 SSH in from your PC
 ```bash
 ssh ubuntu@<robot-ip>
 # Default password: mangdang
 ```
 
-### 6.3 Confirm you're in
+### 5.3 Confirm you're in
 ```bash
 hostname
 # Expected: ubuntu-desktop (or similar)
@@ -147,10 +132,11 @@ uname -a
 
 ---
 
-## 7. ROS2 Installation
+## 6. ROS2 & Mini Pupper Package Setup
 
-The Mini Pupper runs a **ROS2 Humble** stack. Install it on the Pi:
+ROS2 (Robot Operating System 2) is the middleware that ties everything together — sensors, motion control, navigation, and vision all communicate through ROS2 topics and nodes. There are two parts to the install: ROS2 Humble itself, and the Mini Pupper-specific packages that run on top of it.
 
+### 6.1 Install ROS2 Humble (on the Pi)
 ```bash
 sudo apt update
 git clone https://github.com/Tiryoh/ros2_setup_scripts_ubuntu.git
@@ -158,19 +144,14 @@ git clone https://github.com/Tiryoh/ros2_setup_scripts_ubuntu.git
 source /opt/ros/humble/setup.bash
 echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
 ```
-
-This will take 15–20 minutes. Once done verify:
+This takes 15–20 minutes. Verify:
 ```bash
 ros2 --version
 # Expected: ros2cli 0.18.x
 ```
 
----
-
-## 8. Mini Pupper ROS2 Package Setup
-
-On the Pi, install the Mini Pupper ROS2 stack:
-
+### 6.2 Install Mini Pupper ROS2 Packages (on the Pi)
+With ROS2 installed, now pull in the Mini Pupper-specific nodes for servo control, bringup, and navigation:
 ```bash
 mkdir -p ~/ros2_ws/src
 cd ~/ros2_ws/src
@@ -193,7 +174,7 @@ source ~/.bashrc
 
 ---
 
-## 9. Verify Everything is Working
+## 7. Verify Everything is Working
 
 ```bash
 # ROS2
@@ -210,14 +191,11 @@ echo $ROBOT_MODEL
 
 echo $ROS_DOMAIN_ID
 # Expected: 42
-
-# ROS2 topics (run bringup first — see below)
-ros2 topic list
 ```
 
 ---
 
-## 10. First Bringup
+## 8. First Bringup
 
 Once everything is installed, test that the robot stack launches without errors:
 
