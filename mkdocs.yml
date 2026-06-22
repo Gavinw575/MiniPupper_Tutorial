@@ -1,0 +1,105 @@
+site_name: Mini Pupper ROS2 Robotics Course
+site_description: A 10-week hands-on ROS2 robotics course built around the Mini Pupper 2 quadruped robot
+site_author: Gavin
+site_url: https://your-username.github.io/mini-pupper-ros2-course
+
+repo_name: your-username/mini-pupper-ros2-course
+repo_url: https://github.com/your-username/mini-pupper-ros2-course
+edit_uri: edit/main/docs/
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: yellow
+      accent: black
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: yellow
+      accent: black
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  font:
+    text: Roboto
+    code: Roboto Mono
+  features:
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - navigation.footer
+    - search.highlight
+    - search.suggest
+    - content.code.copy
+    - content.code.annotate
+    - toc.integrate
+  icon:
+    repo: fontawesome/brands/github
+
+plugins:
+  - search
+  - glightbox  # image zoom
+
+markdown_extensions:
+  - admonition           # note/warning/tip boxes
+  - pymdownx.details     # collapsible sections
+  - pymdownx.superfences # code blocks inside admonitions
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Setup:
+      - Overview: setup/overview.md
+      - Hardware Assembly: setup/hardware.md
+      - SSH & WiFi: setup/ssh_wifi.md
+      - Ubuntu 22.04 on CM4: setup/ubuntu.md
+      - ROS2 Humble Install: setup/ros2_install.md
+      - Mini Pupper Bringup: setup/bringup.md
+      - Verification Checklist: setup/verification.md
+      - Troubleshooting: setup/troubleshooting.md
+  - Course:
+    
+      - Lab 1 — SSH & First Bringup: weeks/week01/lab.md
+      - Lab 2 — Nodes, Topics & cmd_vel: weeks/week02/lab.md
+      - Lab 3 — Teleop, RViz2 & TF Tree: weeks/week03/lab.md
+      - Lab 4 — RR Model, FK & IK Scripts: weeks/week04/lab.md
+      - Lab 5 — Reinforcement Learning: weeks/week05/lab.md
+      - Lab 6 — LD19 Driver, LaserScan & Obstacle Detection: weeks/week06/lab.md
+      - Lab 7 — Cartographer, Occupancy Grid & Map Save/Load: weeks/week07/lab.md
+      - Lab 8 — Nav2, AMCL, Costmaps & Waypoint Following: weeks/week08/lab.md
+      - Lab 9 — IMX500, libcamera & YOLOv8 Inference: weeks/week09/lab.md
+      - Lab 10 — Autonomous Mapping + YOLO Object Detection: weeks/week10/lab.md
+
+  - Reference:
+      - ROS2 Topics: reference/topics.md
+      - TF Tree: reference/tf_tree.md
+      - Cartographer Config: reference/cartographer.md
+      - Nav2 Config: reference/nav2.md
+      - Leg Geometry & Kinematics: reference/kinematics.md
+      - Hardware Pinout: reference/pinout.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/your-username
+
+copyright: Copyright &copy; 2026 Gavin
