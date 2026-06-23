@@ -164,38 +164,19 @@ Watch your [wandb dashboard](https://wandb.ai) for live reward curves. The rewar
 
 ---
 
-### Step 6 — Effort Conservation (Second Run)
+### Step 6 — Full Reward (Second Run)
 
 Your first policy probably moves forward but inefficiently — flopping, dragging legs, or using excessive motor torques. Now add regularization terms to encourage smoother, more energy-efficient movement.
 
-Find the Reward Configuration section and add to your existing velocity tracking rewards:
-
-```python
-# Keep these from Step 5
-reward_config.rewards.scales.tracking_lin_vel = 1.5
-reward_config.rewards.scales.tracking_ang_vel = 0.75
-
-# Add these regularization terms
-reward_config.rewards.scales.torques = -0.0002
-reward_config.rewards.scales.action_rate = -0.01
-reward_config.rewards.scales.lin_vel_z = -2.0
-reward_config.rewards.scales.ang_vel_xy = -0.05
-```
-
 !!! note "Sign convention"
     Positive coefficients encourage the behavior. Negative coefficients penalize it. Torque and action rate penalties are negative because we want to minimize them — they reduce unnecessary motor effort and jerky motion.
-
-Re-run the entire notebook from the top (Runtime -> Restart and run all) to start a fresh training run.
 
 **DELIVERABLE:** Write out your full reward function in math notation. Why did you choose these terms? What behavior are you trying to encourage or discourage?
 
 **DELIVERABLE:** Qualitatively compare the training video from this run vs your first run. How does the gait look different?
 
----
 
-### Step 7 — Full Reward Tuning (Third Run)
-
-Now you have creative freedom. Using what you learned from the first two runs, tune the reward function to produce the best walking policy you can. You can use any combination of the available reward terms:
+Now you have freedom to train the robot to the best of your abilities. Using what you know about training, tune the reward function to produce the best walking policy you can. You can use any combination of the available reward terms: 
 
 | Term | Effect |
 |------|--------|
@@ -217,6 +198,7 @@ Increase `training_config.ppo.num_timesteps` to at least 300M whenever you are r
 ```python
 training_config.ppo.num_timesteps = 300_000_000
 ```
+Qualitatively compare the training video from this run to your first run. How does this gait look different.
 
 **DELIVERABLE:** List all reward terms you used and their coefficients. Explain your reasoning for each.
 
@@ -228,7 +210,7 @@ training_config.ppo.num_timesteps = 300_000_000
 
 ### Step 8 — Domain Randomization
 
-Your trained policy was optimized for a single fixed simulation. In the real world, conditions vary — the floor has different friction, the robot's mass isn't exactly right, there are small delays in sensor readings. Domain randomization exposes the policy to varied conditions during training so it learns to handle this variability.
+Your trained policy was optimized for fixed simulation. In the real world, the conditions can vary such as with the floor or just random knocking of the robot. Domain randomization exposes the policy to varied conditions during training so it learns to handle this variability.
 
 Find the Domain randomization section of the training config and experiment with these parameters:
 
@@ -247,11 +229,11 @@ training_config.friction_range = (0.4, 1.8)
 training_config.position_control_kp_multiplier_range = (0.6, 1.2)
 ```
 
-Re-run training with domain randomization enabled.
+Re-run training with different domain randomization.
 
 **DELIVERABLE:** What happens if you add too much domain randomization? Try setting `body_mass_scale_range = (0.1, 5.0)` and describe what happens to training.
 
-**DELIVERABLE:** Training video comparing your policy with and without domain randomization. Does it look more or less stable?
+**DELIVERABLE:** Training video comparing your policy with domain randomization. 
 
 ---
 

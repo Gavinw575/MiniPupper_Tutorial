@@ -46,10 +46,13 @@ source ~/ros2_ws/install/setup.bash
 ros2 launch mini_pupper_bringup bringup.launch.py
 ```
 
-Leave this terminal running. Open a second terminal on your PC and source ROS2:
+Leave this terminal running. Open a second terminal on your PC and install/source ROS2:
 
 ```bash
+sudo apt install ros-humble-desktop
 source /opt/ros/humble/setup.bash
+sudo apt install python3-colcon-common-extensions
+mkdir -p ~/ros2_ws/src
 source ~/ros2_ws/install/setup.bash
 ```
 
