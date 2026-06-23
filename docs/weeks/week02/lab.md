@@ -98,6 +98,18 @@ source ~/ros2_ws/install/setup.bash
 
 Verify the robot is live by checking this topic is publishing:
 
+If using a VM ensure your Network Adaptor is set to a "Bridged Adaptor" this makes it so your IP matches the host machines IP. After, restart daemon
+```bash
+ros2 daemon stop && ros2 daemon start
+```
+You will also need to use CycloneDDS if using a VM so run this on both the SSH terminal and the VM terminal.
+
+```bash
+sudo apt install -y ros-humble-rmw-cyclonedds-cpp
+echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
+source ~/.bashrc
+```
+
 ```bash
 ros2 topic hz /joint_states
 ```
