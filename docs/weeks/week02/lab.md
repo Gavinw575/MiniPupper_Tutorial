@@ -34,6 +34,49 @@ This architecture means nodes are completely seperate from other nondes. The tel
 ---
 
 ## Lab Tasks
+### 1.0 - Installing Ros2 Packages
+On your computer terminal install the base ROS2 Humble  
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y software-properties-common curl gnupg lsb-release
+sudo add-apt-repository universe
+
+sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key -o /usr/share/keyrings/ros-archive-keyring.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu $(. /etc/os-release && echo $UBUNTU_CODENAME) main" | sudo tee /etc/apt/sources.list.d/ros2.list > /dev/null
+
+sudo apt update
+sudo apt install -y ros-humble-desktop ros-dev-tools
+```
+Adding the Gazebo+control packages
+```bash
+sudo apt install -y ros-humble-gazebo-ros-pkgs gazebo \
+  ros-humble-xacro ros-humble-joint-state-publisher-gui \
+  ros-humble-robot-state-publisher ros-humble-teleop-twist-keyboard \
+  ros-humble-cartographer ros-humble-cartographer-ros \
+  ros-humble-navigation2 ros-humble-nav2-bringup
+```
+Creating and building the workspace
+```bash
+mkdir -p ~/ros2_ws/src
+cd ~/ros2_ws/src
+git clone https://github.com/mangdangroboticsclub/mini_pupper_ros.git
+
+cd ~/ros2_ws
+source /opt/ros/humble/setup.bash
+sudo rosdep init 2>/dev/null || true
+rosdep update
+rosdep install --from-paths src --ignore-src -r -y
+colcon build --symlink-install
+```
+Adding our environmental variables to ~/.bashrc
+```bash
+echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
+echo "source ~/ros2_ws/install/setup.bash" >> ~/.bashrc
+echo "export ROBOT_MODEL=mini_pupper_2" >> ~/.bashrc
+source ~/.bashrc
+```
+Now that all that is installed we should be able to continue further down the line
+
 
 ### 1.1 — Robot Bringup
 
@@ -46,13 +89,10 @@ source ~/ros2_ws/install/setup.bash
 ros2 launch mini_pupper_bringup bringup.launch.py
 ```
 
-Leave this terminal running. Open a second terminal on your PC and install/source ROS2:
+Leave this terminal running. Open a second terminal on your PC and source ROS2:
 
 ```bash
-sudo apt install ros-humble-desktop
 source /opt/ros/humble/setup.bash
-sudo apt install python3-colcon-common-extensions
-mkdir -p ~/ros2_ws/src
 source ~/ros2_ws/install/setup.bash
 ```
 
