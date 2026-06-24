@@ -103,7 +103,7 @@ If using a VM ensure your Network Adaptor is set to a "Bridged Adaptor" this mak
 ros2 daemon stop && ros2 daemon start
 ```
 You will also need to use CycloneDDS if using a VM so run this on both the SSH terminal and the VM terminal.
-
+c
 ```bash
 sudo apt install -y ros-humble-rmw-cyclonedds-cpp
 echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
