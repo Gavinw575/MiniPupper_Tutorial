@@ -48,14 +48,13 @@ You will paste this key into the Colab notebook in the next step.
 
 ### Step 1 — Open the Colab Notebook
 
-Open the [Mini Pupper 2 Lab 5 Colab](https://colab.research.google.com/drive/1w5c69BxMfCnkBinFAr7S13GcAnJ9dKbK?usp=sharing) and make a copy to your own Google Drive:
+Open the [Mini Pupper 2 Lab 5 Colab](https://colab.research.google.com/drive/1c7scqlD0qbpH344i4ucqPvkoBf5Ub3Lg?usp=sharing) and make a copy to your own Google Drive:
 
 ```
-File → Save a copy in Drive
 ```
 
 !!! warning "This requires a Pro Colab plan"
-    This notebook requires a more powerful GPU then the free version allows for to run. Go to Runtime -> Change runtime type and select A100 (requires Colab Pro).
+    This notebook requires a more powerful GPU then the free version allows for to run. Go to Runtime and change runtime type and select A100.
 
 Paste your wandb API key into the first cell and run that cell to ensure it is connected.
 
@@ -63,7 +62,7 @@ Paste your wandb API key into the first cell and run that cell to ensure it is c
 
 ### Step 2 — Install Dependencies
 
-Run the*Install dependencies cell. This installs:
+Run the install dependencies cell. This installs:
 
 - `mujoco==3.2.7` and `mujoco-mjx==3.2.7` — physics simulator and GPU-accelerated version
 - `brax==0.10.5` — RL environment wrapper
@@ -74,12 +73,12 @@ Run the*Install dependencies cell. This installs:
 
 ### Step 3 — Simulation Config (Mini Pupper 2)
 
-This is where our setup differs from Stanford's. The Simulation Config section has been pre-adapted to use the Mini Pupper 2 MuJoCo model instead of the Pupper v3 model.
+This is where the Mini Pupper setup differs from Stanford's. The Simulation Config section has been pre-adapted to use the Mini Pupper 2 MuJoCo model instead of the Pupper v3 model.
 
-The key changes from Stanford's original notebook are:
+The main changes from Stanford's original notebook are:
 
 ```python
-# Using the Mini Pupper repo instead of Stanford's Pupper v3 repo
+# Using the Mini Pupper repo instead of Stanford's Pupper repo
 simulation_config.model_repo = 'https://github.com/Gavinw575/mini_pupper_2_mjx'
 simulation_config.model_branch = 'main'
 
@@ -101,8 +100,7 @@ training_config.default_pose = jp.array(
      0.0, 0.994, -1.767]   # LB: abduction, hip, knee
 )
 
-# Mini Pupper 2 is smaller so we've lowered the height
-training_config.terminal_body_z = 0.06  # [m]
+training_config.terminal_body_z = 0.06
 ```
 
 Run the Simulation Config cell without modifying it.
@@ -117,7 +115,7 @@ Run the Benchmark pupper model cell. This tells you how many simulation steps pe
 Steps per sec:  1421043.7659230942
 ```
 
-**DELIVERABLE:** Screenshot the benchmark output showing your steps/sec.
+**Task 1:** Screenshot the benchmark output showing your steps/sec.
 
 ---
 
@@ -125,58 +123,52 @@ Steps per sec:  1421043.7659230942
 
 ### Step 5 — Velocity Tracking (First Run)
 
-Before training, you must set reward coefficients. All rewards start at `0` — a robot with no rewards will just flop randomly and learn nothing.
+Before training, you must set reward coefficients. All rewards start at 0. If kept as zero the robot would learn nothing and just flop randomly.
 
-For the first run, well implement velocity tracking only. Find the Reward Configuration section and set:
+For the first run, we'll implement velocity tracking only. Find the Reward Configuration section and set:
 
 ```python
 reward_config.rewards.scales.tracking_lin_vel = 1.5
 reward_config.rewards.scales.tracking_ang_vel = 0.75
 ```
 
-Leave all other rewards at `0`.
+Leave all other rewards at 0 for now.
 
 !!! note "Why these values?"
-    The linear velocity coefficient is roughly double the angular velocity coefficient. This matches Stanford's recommendation - forward/backward motion is the primary objective, turning is secondary.
+    The linear velocity coefficient is roughly double the angular velocity coefficient. This matches Stanford's recommendation. Forward/backward motion is the primary objective, turning is secondary.
 
 The velocity tracking reward uses an exponential function. When the robot's actual velocity matches the commanded velocity, the reward is maximized:
 
 $$r_{vel} = \exp\left(-\frac{(v_{cmd} - v_{actual})^2}{\sigma}\right)$$
 
-where `σ = 0.25` (set in `reward_config.rewards.tracking_sigma`).
+where `sigmea = 0.25` (set in `reward_config.rewards.tracking_sigma`).
 
-**DELIVERABLE:** Before training, write 2–3 sentences predicting what you think the robot will look like after training with only velocity tracking. Will it walk naturally? What might go wrong?
+To start the training, restart your runtime session to clear any issues you might have and then run all of the cells. Each training will take about 25 minutes depending on your number of timesteps.
 
-Now run the entire notebook. Training will take approximately:
 
-| GPU | 200M steps | Expected reward |
-|-----|-----------|----------------|
-| A100 | ~25 minutes | 15–20 |
+Watch your training policy cell and you can see your reward curves each time it hits a checkpoint. The reward should trend upward over training. A downwards slope is okay as long as it does not continue down that path.
 
-Watch your [wandb dashboard](https://wandb.ai) for live reward curves. The reward should trend upward over training.
+After a couple checkpoints have been hit, a video feed of each checkpoint should show up on your [Wandb dashboard](https://wandb.ai) this will also show you your indevidual training evaluations and sessions for when you have multiple different runs.
 
 !!! warning
-    If you need to stop training early, run `wandb.finish()` before starting a new run or the next run will fail to initialize.
+    If you need to stop training early, be sure to stop that run in wandb or the next run will fail to initialize.
 
-**DELIVERABLE:** Screenshot your wandb reward curve after training completes.
+**Task 2:** Screenshot your reward curve after training completes.
 
-**DELIVERABLE:** Access the training progress videos in the Colab file browser under `output_<run-name>/`. Describe what the robot looks like at 20M steps vs 200M steps. Does it look like natural walking?
+**Task 3:** Access the training progress videos in the Colab file browser under `output_<run-name>/` or in your wanb run. Describe what the robot looks like at 20M steps vs 200M steps. Show your results of the final training 
+
+**Task 4:** Play around with a couple different velocity values and see if you could get any better results than the what the values above achieved. Are all your tests better or worse?
+
 
 ---
 
-### Step 6 — Full Reward (Second Run)
-
-Your first policy probably moves forward but inefficiently — flopping, dragging legs, or using excessive motor torques. Now add regularization terms to encourage smoother, more energy-efficient movement.
+### Step 6 — Full Reward
+Your first policy probably may move foward but it will have multiple issues. i,e,. flopping, dragging legs, or using excessive motor torques. Now we can slowly add regularization terms to encourage smoother, more energy-efficient movement.
 
 !!! note "Sign convention"
-    Positive coefficients encourage the behavior. Negative coefficients penalize it. Torque and action rate penalties are negative because we want to minimize them — they reduce unnecessary motor effort and jerky motion.
+    Positive coefficients encourage the behavior. Negative coefficients penalize it. Torque and action rate penalties are negative because we want to minimize them — they reduce unnecessary motor effort and jerky motion. Ot
 
-**DELIVERABLE:** Write out your full reward function in math notation. Why did you choose these terms? What behavior are you trying to encourage or discourage?
-
-**DELIVERABLE:** Qualitatively compare the training video from this run vs your first run. How does the gait look different?
-
-
-Now you have freedom to train the robot to the best of your abilities. Using what you know about training, tune the reward function to produce the best walking policy you can. You can use any combination of the available reward terms: 
+Now you have freedom to train the robot to the best of your abilities. Using what you know about training, tune the reward function to produce the best policy you can. You can use any combination of the available reward terms: 
 
 | Term | Effect |
 |------|--------|
@@ -193,22 +185,28 @@ Now you have freedom to train the robot to the best of your abilities. Using wha
 | `foot_slip` | Penalize feet sliding on ground |
 | `knee_collision` | Penalize knees hitting the ground |
 
+To do this most effiecently it is best to build each training ontop of its-self so it is not starting from 0 all over again each time. To do this you will need to edit the 'Training Config' code block ![Training Checkpoint](images/ToSetTrainingCheckpoint) to whatever run number wanb has your run listed under. 
+The easist way to find your `ENTITY` will be looking at the URL. Your `ENITITY` will be right next to "https://wandb.ai/WhateverYourUserIs" and just input the User ID. 
+Be sure to keep track of run number and which are good Vs. bad runs as it can get confusing when there is a lot. If one run looks bad you can always change your run number back to which ever run looked the best.
+
+If you want to start complete over comment out the ENTITY line and put the run number as "None".
+
 Increase `training_config.ppo.num_timesteps` to at least 300M whenever you are ready for your final run:
 
 ```python
 training_config.ppo.num_timesteps = 300_000_000
 ```
-Qualitatively compare the training video from this run to your first run. How does this gait look different.
+**Task 5:** Qualitatively compare the best training video from these runs to your first run. How does this gait look different.
 
-**DELIVERABLE:** List all reward terms you used and their coefficients. Explain your reasoning for each.
+**Task 6:** List all reward terms you used and their values. Explain your reasoning for each term you applied. What behavior were you trying to encourage or discourage? Where there any terms you left out because it made things worse?
 
-**DELIVERABLE:** Training video showing your best policy walking in simulation.
+**Task 7:** Training video showing your best policy walking in simulation.
 
-**DELIVERABLE:** Can the robot stand still when given a zero velocity command? Record a video with `x_vel = 0, y_vel = 0, ang_vel = 0` in the Visualize Policy section.
+**Task 8:** Can the robot stand still when given a zero velocity command? Record a video with `x_vel = 0, y_vel = 0, ang_vel = 0` in the Visualize Policy section. Try to find the best policy to achieve this.
 
 ---
 
-### Step 8 — Domain Randomization
+### Step 7 — Domain Randomization
 
 Your trained policy was optimized for fixed simulation. In the real world, the conditions can vary such as with the floor or just random knocking of the robot. Domain randomization exposes the policy to varied conditions during training so it learns to handle this variability.
 
@@ -216,32 +214,32 @@ Find the Domain randomization section of the training config and experiment with
 
 ```python
 # Kicks the robot randomly during training :(
-training_config.kick_probability = 0.04
-training_config.kick_vel = 0.10
+training_config.kick_probability = 
+training_config.kick_vel = 
 
 # Randomize body mass (robot may be heavier/lighter than sim)
-training_config.body_mass_scale_range = (0.8, 1.3)
+training_config.body_mass_scale_range = 
 
 # Randomize ground friction (carpet vs hardwood vs tile)
-training_config.friction_range = (0.4, 1.8)
+training_config.friction_range = 
 
 # Randomize motor gains (servos may not be perfectly calibrated)
-training_config.position_control_kp_multiplier_range = (0.6, 1.2)
+training_config.position_control_kp_multiplier_range = 
 ```
 
 Re-run training with different domain randomization.
 
-**DELIVERABLE:** What happens if you add too much domain randomization? Try setting `body_mass_scale_range = (0.1, 5.0)` and describe what happens to training.
+**Task 9:** What happens if you add too much domain randomization? Try setting `body_mass_scale_range = (0.1, 5.0)` and describe what happens to training.
 
-**DELIVERABLE:** Training video comparing your policy with domain randomization. 
+**Task 10:** Training video comparing your policy with domain randomization. 
 
 ---
 
 ## Visualization
 
-### Step 9 — Visualize Your Trained Policy
+### Step 8 — Visualize Your Trained Policy
 
-After training, run the Visualize Policy section to watch your policy in action. Set different velocity commands to test behavior:
+After training your best model, run the Visualize Policy section to watch your policy in action. Set different velocity commands to test behavior:
 
 ```python
 # Walking forward
@@ -270,9 +268,9 @@ frames = visualization_env.render(rollout[::render_every], camera='tracking_cam'
 media.show_video(frames, fps=1.0 / visualization_env.dt / render_every, width=640)
 ```
 
-**DELIVERABLE:** Video of your best policy walking forward at `x_vel = 0.75`.
+**Task 11:** Video of your best policy walking in a bunch of different directions
 
-**DELIVERABLE:** Inspect the joint position plots generated after visualization. Compare the leg motion pattern to the triangular Raibert heuristic gait from Week 3. Do the legs follow a similar triangular path? Write a few sentences about similarities and differences.
+**Task 12:** Inspect the joint position plots generated after visualization. Compare the leg motion pattern to the triangular Raibert heuristic gait from Week 3. Do the legs follow a similar triangular path? Write a few sentences about similarities and differences.
 
 ---
 
@@ -317,7 +315,7 @@ We trained entirely in simulation this week. The Mini Pupper 2 deployment pipeli
 12. Sim-to-real discussion questions (3 questions, 3–4 sentences each).
 
 ---
-
+!<-- 
 ## Troubleshooting
 
 ??? question "Training cell fails with `wandb.finish()` error"
@@ -359,4 +357,4 @@ We trained entirely in simulation this week. The Mini Pupper 2 deployment pipeli
     ```
 
 ---
-
+-->
