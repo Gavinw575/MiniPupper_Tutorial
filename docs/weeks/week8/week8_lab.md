@@ -55,7 +55,7 @@ This course's actual configuration (`mini_pupper_navigation/param/real_table.yam
 
 ### Step 1 — Launch Nav2 With Your Map
 
-With bringup running on the robot, launch Nav2 on your PC using the map you saved last week:
+With bringup running on the robot, launch Nav2 on your PC using the map you saved:
 
 ```bash
 ros2 launch mini_pupper_navigation navigation_smacplanner.launch.py map:=$HOME/map.yaml
@@ -67,21 +67,20 @@ For the best chance at automatic localization, start the robot at roughly the sa
 
 In RViz, look for the particle cloud display (a scatter of small arrows around the robot). Each arrow is one pose hypothesis. A tight, converged cluster means AMCL is confident about the robot's position; a wide scatter means it isn't.
 
-If the cloud looks scattered or clearly wrong, don't just hope it sorts itself out — use the **2D Pose Estimate** tool in RViz's toolbar: click it, then click-and-drag on the map at the robot's actual position and facing direction. This gives AMCL a strong initial guess to converge around.
+If the cloud looks scattered or wrong, use the 2D Pose Estimate tool in RViz's toolbar: click it, then click-and-drag on the map at the robot's actual position and facing direction. This gives AMCL a strong initial guess to converge around.
 
-**Task 1:** Screenshot the particle cloud right after launch, and again after it's converged (driving the robot a short distance with teleop usually helps it converge faster, since new scans give AMCL more to match against). Describe the visible difference.
-
+**Task 1:** Screenshot the particle cloud right after launch, and again after it's converged (driving the robot a short distance with teleop usually helps it converge faster, since new scans give AMCL more to match against). 
 ---
 
 ## Costmaps
 
 ### Step 3 — Compare Global and Local Costmaps
 
-In RViz, toggle the Global Costmap and Local Costmap displays on and off independently. The global costmap is the static map, inflated outward near walls — it won't change no matter what you put in front of the robot temporarily. The local costmap is a small rolling window of live sensor data — it *will* react.
+In RViz, toggle the Global Costmap and Local Costmap displays on and off independently. The global costmap is the static map, inflated outward near walls — it won't change no matter what you put in front of the robot temporarily. The local costmap is a small rolling window of live sensor data, it will react.
 
 Place a temporary obstacle (a book, your hand) somewhere in front of the robot that isn't part of the original mapped environment.
 
-**Task 2:** Screenshot the local costmap reacting to your temporary obstacle, and confirm the global costmap does *not* show it. Why does Nav2 need both, rather than just live obstacle data alone?
+**Task 2:** Screenshot the local costmap reacting to your temporary obstacle, and confirm the global costmap does not show it. Why does Nav2 need both, rather than just live obstacle data alone?
 
 ---
 
@@ -89,7 +88,7 @@ Place a temporary obstacle (a book, your hand) somewhere in front of the robot t
 
 ### Step 4 — Send a Nav2 Goal
 
-Use the **Nav2 Goal** tool in RViz's toolbar: click it, then click-and-drag at a destination within your mapped space. Watch the global path appear (a line from robot to goal) and the robot execute it.
+Use the Nav2 Goal tool in RViz's toolbar: click it, then click-and-drag at a destination within your mapped space. Watch the global path appear (a line from robot to goal) and the robot execute it.
 
 **Task 3:** Record or screenshot a successful goal execution. Did the robot's actual path ever deviate from the originally-planned global path line? If so, describe what it was avoiding and why the local controller made that choice instead of just following the global plan exactly.
 
@@ -99,15 +98,15 @@ Use the **Nav2 Goal** tool in RViz's toolbar: click it, then click-and-drag at a
 
 ### Step 5 — Write a Waypoint Patrol Script
 
-RViz's goal tool only sends one goal at a time. To chain several together autonomously, you'll use Nav2's Simple Commander API — a Python library that wraps the action-server calls Nav2 expects.
+RViz's goal tool only sends one goal at a time. To chain several together autonomously, you'll use Nav2's Simple Commander API. A Python library that wraps the action-server calls Nav2 expects.
 
 Create the file:
 
 ```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/waypoint_patrol.py
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/waypoint_patrol.py
 ```
 
-Fill in the starter code. `# TODO` marks what you need to write.
+Fill in the starter code.
 
 ```python
 #!/usr/bin/env python3
@@ -139,19 +138,21 @@ def main():
     rclpy.init()
     navigator = BasicNavigator()
 
-    # TODO: Set this to the robot's actual starting pose in the map frame —
+    # Task: Set this to the robot's actual starting pose in the map frame —
     # the same pose you started SLAM mapping from in Week 7.
     # Hint: make_pose(navigator, x, y)
-    initial_pose = # YOUR CODE HERE
+
+    initial_pose = # Your code
     navigator.setInitialPose(initial_pose)
 
     navigator.waitUntilNav2Active()
 
-    # TODO: Build a list of at least 3 waypoints as PoseStamped objects
+    # Task: Build a list of at least 3 waypoints as PoseStamped objects
     # using make_pose(navigator, x, y). Pick coordinates inside your
     # mapped space that are actually reachable — check your map.pgm
     # from Week 7 before picking values, so you're not aiming at a wall.
-    waypoints = # YOUR CODE HERE
+
+    waypoints = # Your code
 
     navigator.followWaypoints(waypoints)
 
@@ -183,7 +184,7 @@ Register the node in `setup.py`:
 'waypoint_patrol = mini_pupper_labs.waypoint_patrol:main',
 ```
 
-Build and run it **in a separate terminal from Nav2** — this script doesn't launch Nav2 itself, it just sends commands to a Nav2 stack that's already running from Step 1:
+Build and run it in a separate terminal from Nav2. this script doesn't launch Nav2 itself, it just sends commands to a Nav2 stack that's already running from Step 1:
 
 ```bash
 cd ~/ros2_ws
@@ -192,8 +193,7 @@ source install/setup.bash
 ros2 run mini_pupper_labs waypoint_patrol
 ```
 
-**Task 4:** Video or description of the robot completing your waypoint route. Did it succeed, get canceled, or fail? If it failed partway, what happened?
-
+**Task 4:** Video of the robot completing your waypoint route.
 ---
 
 ## Investigating the Velocity Scaler
@@ -207,7 +207,7 @@ ros2 topic echo /cmd_vel_navigation2
 ros2 topic echo /cmd_vel
 ```
 
-**Task 5:** Compare a few matched pairs of values between the two topics. Do they match the 1.7×/2.0×/2.0× factors described in the Background? Then answer: DWB is configured with `max_vel_x: 0.20` — presumably a deliberately conservative limit for safe planning around the costmap's safety margins. If the *actual* command reaching the robot is scaled up to as much as 0.34 m/s, what risk does that introduce near obstacles that the costmap's inflation radius was tuned assuming the unscaled speed?
+**Task 5:** Compare a few matched pairs of values between the two topics. Do they match the 1.7×/2.0×/2.0× factors described in the Background? Then answer: DWB is configured with `max_vel_x: 0.20` — presumably a deliberately conservative limit for safe planning around the costmap's safety margins. If the actual command reaching the robot is scaled up to as much as 0.34 m/s, what risk does that introduce near obstacles that the costmap's inflation radius was tuned assuming the unscaled speed?
 
 ---
 

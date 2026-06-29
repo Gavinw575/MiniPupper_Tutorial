@@ -1,22 +1,63 @@
-# Lab 3 — Teleop, RViz2 & TF Tree
+# Week 3 — Teleoperation & Gait
+
+---
+
+**Objectives:**
+
+1. Drive the Mini Pupper 2 with keyboard teleop and understand what `/cmd_vel` actually carries.
+2. Explain what CHAMP does between receiving `/cmd_vel` and producing a walking gait.
+3. Read and interpret a TF (transform) tree — frames, parent/child relationships, and live inspection tools.
+4. Write a ROS2 node that uses TF to track the robot's position over time.
+
+---
+
+**Reference Material:**
+
+- [teleop_twist_keyboard (ROS2 package)](https://github.com/ros2/teleop_twist_keyboard)
+- [tf2 documentation](https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Tf2-Main.html)
+- [CHAMP quadruped controller (GitHub)](https://github.com/chvmp/champ)
+- Week 2 Lab — Nodes, Topics & cmd_vel (you'll reuse your `/cmd_vel` publisher knowledge here)
+
+---
 
 ## Before You Start
 
-Make sure your robot is up and bringup is running (real robot or simulation — either works for this lab). If you need a refresher on starting things up, check the Verification Checklist from Week 1.
+Make sure your robot is up and bringup is running. If you need a refresher on starting things up, check the Verification Checklist from Week 1.
 
-You should have `/cmd_vel`, `/odom`, and `/tf` all live before continuing. Quick check:
+You should have `/cmd_vel`, `/odom`, and `/tf` all live before continuing.
 
 ```bash
-ros2 topic list | grep -E "cmd_vel|odom|tf"
+ros2 topic list
 ```
 
 ---
 
-## Part 1 — Driving with Keyboard Teleop
+## Background
 
-So far the only way you've sent `/cmd_vel` commands is through the publisher node you wrote last week. That's great for understanding the message, but it's a clunky way to actually drive the robot around. Today you'll use `teleop_twist_keyboard`, a standard ROS2 package made exactly for this.
+Last week you got `/cmd_vel` working, a `geometry_msgs/Twist` message carrying linear and angular velocity. For the Mini Pupper 2, only `linear.x` (forward/back) and `angular.z` (turning) actually matter; the robot can't fly (obvioulsy), so everything else gets ignored.
 
-### 1.1 — Install and Launch
+What we dont know yet is what happens after that message gets published. Since the Pupper doesn't have wheels we need somethat that can coordinate commands into a leg gait. This is where CHAMP gets used. CHAMP is a quadruped controller framwork that is running on the robot. CHAMP subscribes to `/cmd_vel` and every control cycle:  
+
+1. Picks a gait pattern (the default is a trot, diagonal leg pairs move together)
+2. Generates a foot trajectory for each leg based on the requested velocity
+3. Solves inverse kinematics to convert each foot position into joint angles
+4. Publishes those joint angles to the servo controllers
+
+You are not writing any of that yet. Your job is to understand the what goes in and what comes out, or the interface.
+
+The other concept this week is TF, ROS2's transform tree. When CHAMP or any other node needs to know "where is this foot relative to the body" or "where is the robot relative to the map," it doesn't recompute that chain from scratch every time. TF maintains a constantly updated tree of coordinate frames, where every frame knows its position relative to its parent. Any node can ask "where is X relative to Y, right now" without caring how many frames sit in between.
+
+!!! note "Frames you'll see on the Mini Pupper 2"
+    - `map` — fixed world frame (only exists once SLAM is running, Week 7)
+    - `odom` — the robot's estimate of its own movement since startup; drifts over time
+    - `base_link` — the robot's body, the frame everything else attaches to
+    - Leg frames (`rf1`, `rf2`, `rf3`, `rffoot`, and the equivalent for the other three legs), `lidar_link`, `camera_link` — rigidly attached to `base_link` at fixed or moving offsets
+
+---
+
+## Driving the Robot
+
+### Step 1 — Install and Launch Keyboard Teleop
 
 If it's not already installed:
 
@@ -24,22 +65,15 @@ If it's not already installed:
 sudo apt install ros-humble-teleop-twist-keyboard
 ```
 
-Launch it:
+Launch it with bringup running:
 
 ```bash
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
 ```
 
-You'll get a terminal UI showing the key bindings. The basics:
+You'll get a terminal UI showing the key bindings. The basics: `i` forward, `,` backward, `j`/`l` turn left/right, `k` stop. Drive the robot around for a minute and get a feel for it.
 
-- `i` — forward
-- `,` — backward
-- `j` / `l` — turn left / right
-- `k` — stop
-
-Drive the robot around for a minute. Get a feel for it.
-
-### 1.2 — Watch What You're Actually Sending
+### Step 2 — Watch What You're Actually Sending
 
 Open a second terminal and watch the topic while you drive:
 
@@ -47,17 +81,17 @@ Open a second terminal and watch the topic while you drive:
 ros2 topic echo /cmd_vel
 ```
 
-Drive forward, then turn, then stop. Answer these in your lab notes:
+**Task 1:** Drive forward, then turn, then stop, while watching the echoed topic. Answer in your writeup:
 
-1. When you press `i`, what value shows up in `linear.x`? What about when you press `,`?
-2. When you press `j` or `l`, which field changes — and is the sign what you expected for "turn left" vs "turn right"?
-3. What gets published when you press `k` to stop? Is it that the topic stops publishing, or does it publish a message with everything zeroed out? (Hint: this distinction matters a lot for safety — think about what happens if a teleop node crashes mid-drive.)
+- When you press `i`, what value shows up in `linear.x`? What about `,`?
+- When you press `j` or `l`, which field changes, and is the sign what you'd expect for "turn left" vs "turn right"?
+- When you press `k` to stop, does the topic stop publishing entirely, or does it keep publishing with everything zeroed out?
 
 ---
 
-## Part 2 — Reading the TF Tree
+## Reading the TF Tree
 
-### 2.1 — View It Live in RViz2
+### Step 3 — View It Live in RViz2
 
 Launch RViz2 with the config from Week 1:
 
@@ -65,53 +99,44 @@ Launch RViz2 with the config from Week 1:
 ros2 launch mini_pupper_description rviz.launch.py
 ```
 
-Add a **TF** display if it isn't already there (Add → By Display Type → TF). You should see the frame tree as little colored axes, with `base_link` in the middle and everything else branching off it.
+Add a TF display if it isn't already there (Add, By Display Type, TF). You'll see the frame tree as colored axes, with `base_link` in the middle and everything else branching off it. Drive the robot with teleop while watching RViz — `base_link` moves, but the relationship between `base_link` and the leg/sensor frames stays fixed, since they're rigidly attached.
 
-Drive the robot with teleop again while watching RViz. Notice that `base_link` moves, but the relationship between `base_link` and the leg/sensor frames stays the same — they're rigidly attached. What frame *doesn't* move at all, no matter how far you drive?
+### Step 4 — Generate a Static Diagram and Query a Transform
 
-### 2.2 — Generate a TF Tree Diagram
-
-RViz is good for watching live, but for actually understanding the tree structure, generate a static diagram:
+RViz is good for watching live, but for understanding the tree structure, generate a static diagram:
 
 ```bash
 ros2 run tf2_tools view_frames
-```
-
-This creates a PDF in your current directory showing every frame, its parent, and the broadcast rate. Open it:
-
-```bash
 xdg-open frames_*.pdf
 ```
 
-In your lab notes, sketch (or just describe) the parent-child relationship for three frames of your choosing — for example, "`laser` is a child of `base_link`."
+This creates a PDF showing every frame, its parent, and its broadcast rate.
 
-### 2.3 — Query a Specific Transform
-
-You can ask TF directly for the relationship between any two frames using `tf2_echo`:
+You can also ask TF directly for the relationship between any two frames:
 
 ```bash
 ros2 run tf2_ros tf2_echo odom base_link
 ```
 
-This prints the translation and rotation of `base_link` relative to `odom`, updating continuously. Drive forward a short distance with teleop and watch the translation values change.
+This prints the translation and rotation of `base_link` relative to `odom`, updating continuously.
 
-Question for your notes: if you drive in a perfect square and end up back where you started, would you expect `odom → base_link` to report you're back at the origin? Why or why not? (Hint: think about what `odom` actually is — re-read the Overview if you need to.)
+**Task 2:** Sketch (or describe) the parent-child relationship for three frames of your choosing from the `view_frames` diagram. Then drive forward a short distance while watching `tf2_echo odom base_link`, and describe what changes.
 
 ---
 
-## Part 3 — Writing a TF-Based Position Tracker
+## Building a Position Tracker
 
-Time to write some code. You're going to build a node that uses TF to track the robot's position over time and prints it out — the same kind of lookup that Nav2 will rely on heavily starting in Week 8.
+### Step 5 — Write a TF-Based Position Tracker Node
 
-### 3.1 — Set Up the File
+Now we're going to build a node that uses TF to track the robot's position over time and prints it out.
+
+Create the file:
 
 ```bash
 touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/position_tracker.py
 ```
 
-### 3.2 — The Starter Code
-
-Copy this in. As before, `# TODO` marks what you need to fill in, with a hint above each one.
+Fill in the starter code below. `# Task` marks what you need to write.
 
 ```python
 #!/usr/bin/env python3
@@ -135,8 +160,7 @@ class PositionTrackerNode(Node):
         super().__init__('position_tracker')
 
         # TF2 needs a Buffer to store incoming transforms and a
-        # TransformListener to actually subscribe to /tf and /tf_static
-        # and fill that buffer.
+        # TransformListener to subscribe to /tf and /tf_static and fill it.
         self.tf_buffer = Buffer()
         self.tf_listener = TransformListener(self.tf_buffer, self)
 
@@ -144,7 +168,7 @@ class PositionTrackerNode(Node):
         self.start_x = None
         self.start_y = None
 
-        # TODO: Create a timer that calls self.timer_callback every 0.5 seconds.
+        # Task: Create a timer that calls self.timer_callback every 0.5 seconds.
         # Hint: self.create_timer(period_in_seconds, callback_function)
         self.timer = # YOUR CODE HERE
 
@@ -152,30 +176,28 @@ class PositionTrackerNode(Node):
 
     def timer_callback(self):
         try:
-            # TODO: Look up the transform from 'odom' to 'base_link'.
+            # Task: Look up the transform from 'odom' to 'base_link'.
             # Hint: self.tf_buffer.lookup_transform(target_frame, source_frame, time)
-            # The third argument is "what time" — pass rclpy.time.Time() to mean "latest available"
+            # Pass rclpy.time.Time() as the time argument to mean "latest available"
             transform = # YOUR CODE HERE
 
         except (LookupException, ConnectivityException, ExtrapolationException) as e:
             self.get_logger().warn(f'Could not get transform: {e}')
             return
 
-        # The transform's translation tells us where base_link is relative to odom
         x = transform.transform.translation.x
         y = transform.transform.translation.y
 
         if self.start_x is None:
-            # First reading — this becomes our reference point
             self.start_x = x
             self.start_y = y
             self.get_logger().info(f'Starting position recorded: ({x:.3f}, {y:.3f})')
             return
 
-        # TODO: Compute the straight-line distance traveled from the start
+        # Task: Compute the straight-line distance traveled from the start
         # position using x, y, self.start_x, and self.start_y.
-        # Hint: this is the standard distance formula — sqrt of the sum of
-        # squared differences. The math module is already imported.
+        # Hint: standard distance formula — sqrt of the sum of squared
+        # differences.
         distance = # YOUR CODE HERE
 
         self.get_logger().info(
@@ -195,21 +217,13 @@ if __name__ == '__main__':
     main()
 ```
 
-### 3.3 — Register the Node
-
-Same as last week — open `setup.py`:
-
-```bash
-cat ~/ros2_ws/src/mini_pupper_labs/setup.py
-```
-
-Find `entry_points`, and add a line for this node:
+Register the node in `setup.py` under `entry_points`:
 
 ```
 'position_tracker = mini_pupper_labs.position_tracker:main',
 ```
 
-### 3.4 — Build and Run
+Build and run:
 
 ```bash
 cd ~/ros2_ws
@@ -218,25 +232,44 @@ source install/setup.bash
 ros2 run mini_pupper_labs position_tracker
 ```
 
-With the node running, open another terminal and drive the robot with teleop. Watch the distance value climb as you drive, and notice it should return close to zero if you drive back to where you started.
+With the node running, drive the robot with teleop in another terminal and watch the distance value climb.
 
-### 3.5 — Lab Notes
+**Task 3:** With the node running, wait a few seconds without driving at all. Does the printed distance stay perfectly at 0.000, or does it drift slightly? What does that tell you about `/odom` as a sensor?
 
-Answer these:
-
-1. What happens to the printed distance if you wait a few seconds without driving at all — does it stay perfectly at 0.000, or does it drift slightly? What does that tell you about `/odom` as a sensor?
-2. The `lookup_transform` call can throw exceptions, which is why it's wrapped in a `try/except`. Why might a transform lookup fail right when the node first starts up, even though everything is working correctly?
+**Task 4:** The `lookup_transform` call is wrapped in a `try/except`. Why might a transform lookup fail right when the node first starts up, even though everything is working correctly?
 
 ---
 
-## Stretch Goal (Optional)
+## Looking Ahead: Why Odometry Isn't Enough
 
-Drive the robot in a square — forward, turn 90°, repeat four times — trying to land back exactly where you started. Compare the `position_tracker` node's reported distance-from-start at the end to your best estimate of the *actual* distance (you can eyeball this against a tape measure or floor tile on the real robot, or compare to the ground-truth pose topic in simulation).
+Drive the robot in a square — forward, turn 90°, repeat four times — trying to land back exactly where you started. Watch your `position_tracker` node's reported distance-from-start as you do it.
 
-This gap is **odometry drift**, and it's the entire reason SLAM exists — you'll come back to this exact idea in Week 7.
+**Task 5:** Compare the `position_tracker` node's reported distance-from-start at the end to your best estimate of where you *actually* ended up (eyeball it against a tape measure or floor tile on the real robot, or compare to a ground-truth pose topic in simulation).
 
 ---
 
-## What's Next
+## Tasks
 
-Week 4 picks up right where the "CHAMP is a black box" idea left off. You'll model a single leg as a 2-link system and write the forward and inverse kinematics yourself — the actual math CHAMP is doing under the hood every time you send it a `/cmd_vel` command.
+1. Teleop observations: `linear.x`/`angular.z` sign conventions and stop behavior (Step 2).
+2. TF tree sketch (three frames) and `tf2_echo` observation while driving (Step 4).
+3. Drift-at-rest observation and explanation (Step 5).
+4. Explanation of why `lookup_transform` can fail on startup (Step 5).
+5. Square-drive odometry drift comparison (Looking Ahead).
+
+---
+
+## Troubleshooting
+
+??? question "`teleop_twist_keyboard` command not found"
+    Confirm the install completed: `sudo apt install ros-humble-teleop-twist-keyboard`. If you're in a sourced workspace, make sure you haven't shadowed the system package — check `ros2 pkg list | grep teleop`.
+
+??? question "RViz shows no TF frames at all"
+    Confirm bringup is actually running and `robot_state_publisher` is active: `ros2 node list | grep robot_state_publisher`. No `robot_state_publisher` means no `/tf_static` for the rigid frames.
+
+??? question "`position_tracker` immediately throws `LookupException` and never recovers"
+    Check that `/tf` and `/tf_static` are both actually publishing: `ros2 topic hz /tf`. If nothing's there, bringup likely isn't fully up yet — restart it and wait a few seconds before launching the node.
+
+??? question "Distance from start jumps to a huge, nonsensical number"
+    This usually means the transform briefly returned a stale or extrapolated value. Confirm you're passing `rclpy.time.Time()` (latest available) rather than a fixed past timestamp to `lookup_transform`.
+
+---

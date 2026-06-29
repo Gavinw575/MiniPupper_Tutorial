@@ -45,10 +45,10 @@ If a particular laser pulse doesn't get a valid reflection (nothing in range, or
 
 ### Step 1 — Confirm the Lidar Is Live
 
-With bringup running (real robot or simulation), check that `/scan` is publishing:
+With bringup running, check that `/scan` is publishing:
 
 ```bash
-ros2 topic list | grep scan
+ros2 topic list
 ```
 
 Check the actual publish rate:
@@ -77,13 +77,13 @@ Then capture one real scan:
 ros2 topic echo /scan --once
 ```
 
-**Task 2:** Answer both of the following in your writeup:
+**Task 2:** Answer both of the following:
 
 - In your own words, explain what `angle_increment` represents and why `ranges[]` is a flat array rather than, say, a list of (angle, distance) pairs.
 - Using `angle_min`, `angle_max`, and `angle_increment` from your captured scan, calculate how many points you'd expect in `ranges[]`. Then count the actual length of `ranges[]` from the echoed message. Do they match?
 
 !!! note "Which index is 'front'?"
-    Don't assume `ranges[0]` corresponds to straight ahead of the robot — that depends on how the lidar is mounted and which direction it scans (`laser_scan_dir` in the launch file). You'll figure this out empirically in Step 3 rather than guessing at it.
+    Don't assume `ranges[0]` corresponds to straight ahead of the robot — that depends on how the lidar is mounted and which direction it scans (`laser_scan_dir` in the launch file).
 
 ---
 
@@ -91,13 +91,13 @@ ros2 topic echo /scan --once
 
 ### Step 3 — Write the Node
 
-Time to write a node that watches `/scan` and reports whether something is too close. Create the file:
+Write a node that watches `/scan` and reports whether something is too close. Create the file:
 
 ```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/obstacle_detector.py
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/obstacle_detector.py
 ```
 
-Fill in the starter code below. As in previous labs, `# TODO` marks what you need to write, with a hint above each one.
+Fill in the starter code below.
 
 ```python
 #!/usr/bin/env python3
@@ -119,8 +119,8 @@ class ObstacleDetectorNode(Node):
     def __init__(self):
         super().__init__('obstacle_detector')
 
-        self.safety_distance = 0.30  # meters
-        self.fov_deg = 60.0          # total field of view, centered on "front"
+        self.safety_distance = 0.3 # meters
+        self.fov_deg = 60 # total field of view, centered on "front"
 
         self.subscription = self.create_subscription(
             LaserScan,
@@ -135,35 +135,39 @@ class ObstacleDetectorNode(Node):
         )
 
     def scan_callback(self, msg: LaserScan):
-        # TODO: Figure out how many indices on either side of "front" your
+
+        # Task: Figure out how many indices on either side of "front" your
         # field of view covers. You know the total angular width you want
         # (self.fov_deg, converted to radians) and the angle between each
         # point (msg.angle_increment). How many array slots does that span?
         # Hint: half the angular width, divided by angle_increment, gives
         # you how many indices to look at on EACH side of center.
-        half_fov_indices = # YOUR CODE HERE
 
-        # TODO: Until you've empirically determined which index is "front"
-        # (see the note in Step 2), use index 0 as a placeholder center.
+        half_fov_indices = # Your code
+
+        # Task: Until you've determined which index is "front,"
+        # use index 0 as a placeholder center.
         # You'll come back and fix this once you've tested it against a
         # real object placed directly in front of the robot.
+
         center_index = 0
 
         start_index = max(0, center_index - half_fov_indices)
         end_index = min(len(msg.ranges) - 1, center_index + half_fov_indices)
 
-        # TODO: Pull out the slice of msg.ranges from start_index to
+        # Task: Pull out the slice of msg.ranges from start_index to
         # end_index (inclusive), but filter out any values that are inf,
         # -inf, or nan before looking for the minimum. A value isn't a
         # valid distance reading if math.isfinite() returns False for it.
-        valid_ranges = # YOUR CODE HERE
+
+        valid_ranges = # Your code
 
         if not valid_ranges:
             self.get_logger().info('No valid readings in field of view.')
             return
 
-        # TODO: Find the smallest distance in valid_ranges.
-        closest_distance = # YOUR CODE HERE
+        # Task: Find the smallest distance in valid_ranges.
+        closest_distance = # Your code 
 
         obstacle_detected = closest_distance < self.safety_distance
 
@@ -208,7 +212,7 @@ With the node running, place an object directly in front of the robot — close 
 
 Right now, `center_index = 0` is just a placeholder, so the node is checking around whatever `ranges[0]` happens to point at — which may or may not be the front of the robot. Move the test object around the robot (front, side, back) while watching the log, and figure out which index range actually corresponds to "directly in front."
 
-**TODO (back in the code):** Once you've identified the correct front-facing index, replace `center_index = 0` with the right value.
+**Task (back in the code):** Once you've identified the correct front-facing index, replace `center_index = 0` with the right value.
 
 **Task 4:** Describe how you determined which index corresponds to "front." What did you observe as you moved the test object around the robot?
 
@@ -220,7 +224,7 @@ Right now, `center_index = 0` is just a placeholder, so the node is checking aro
 
 ### Step 4 — Safety Stop While Driving
 
-Right now the obstacle detector only logs — it doesn't actually do anything to stop the robot. Let's fix that, using the same teleop setup from Week 3.
+Right now the obstacle detector only logs. It doesn't actually do anything to stop the robot. Let's fix that, using the same teleop setup from Week 3.
 
 The idea: instead of `teleop_twist_keyboard` publishing straight to `/cmd_vel`, we'll have it publish to a renamed topic, and let the obstacle detector sit in the middle — passing velocity commands through when it's safe, and zeroing them out when something's too close.
 
@@ -242,34 +246,33 @@ self.cmd_vel_sub = self.create_subscription(
 )
 self.obstacle_detected = False  # updated by scan_callback
 
-# TODO: In scan_callback, instead of just logging obstacle_detected,
+# Task: In scan_callback, instead of just logging obstacle_detected,
 # store it on self so cmd_vel_callback can check it:
 # self.obstacle_detected = obstacle_detected
 
 def cmd_vel_callback(self, msg: Twist):
-    # TODO: If self.obstacle_detected is True AND the robot is trying to
+    # Task: If self.obstacle_detected is True AND the robot is trying to
     # move FORWARD (msg.linear.x > 0), publish a zeroed-out Twist instead
     # of passing the command through. Turning in place or backing away
     # should still be allowed even with an obstacle ahead — only forward
     # motion into the obstacle needs to be blocked.
     # Hint: you'll need to construct a new Twist() with all fields at 0
     # for the "blocked" case, and just republish msg unchanged otherwise.
-    pass  # YOUR CODE HERE
+    
+    pass  # Your code
 ```
 
 Rebuild, run the obstacle detector, and drive with teleop toward an object. The robot should refuse to move forward once it's within your safety distance, but should still let you back up or turn.
 
-**Task 6:** Short video or written description: drive toward an object with teleop and show the safety stop engaging. Then show that backing away and turning still work while the obstacle is detected.
-
-**Task 7:** What happens if you set `safety_distance` very small (e.g. 0.05m)? What about very large (e.g. 2.0m)? Is there a practical tradeoff here for a real robot?
+**Task 6: Video of driving toward an object with teleop and show the safety stop engaging. Then show that backing away and turning still work while the obstacle is detected.
 
 ---
 
-## Stretch Goal (Optional)
+### Step 5 - 360° View
 
 Your current field of view only looks at a forward-facing cone. Extend the node to scan the *entire* 360° range and report the closest obstacle anywhere around the robot, along with which general direction it's in (front/back/left/right). This is a step toward the kind of full-surroundings awareness Nav2's costmaps will use starting in Week 8.
 
-**Task 8 (Optional):** Demonstrate your 360° proximity detector and describe how you determined direction (front/back/left/right) from the scan data.
+**Task 7:** Demonstrate your 360° proximity detector and describe how you determined direction (front/back/left/right) from the scan data.
 
 ---
 
@@ -281,8 +284,7 @@ Your current field of view only looks at a forward-facing cone. Extend the node 
 4. Description of how you empirically determined the "front" index (Step 3.3).
 5. Screenshots showing `Obstacle detected: True` at 20cm and `False` at 50cm (Step 3.3).
 6. Safety-stop demo showing forward motion blocked, but backing up/turning still allowed (Step 4).
-7. Written answer on the safety_distance tradeoff question (Step 4).
-8. (Optional) 360° proximity detection stretch goal.
+7. 360° proximity detection stretch goal (Step 5)
 
 ---
 

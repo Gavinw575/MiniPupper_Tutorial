@@ -1,188 +1,248 @@
-# Lab 4 — RR Model, FK & IK Scripts
-
-## Before You Start
-
-You'll need two scripts for this lab: `MiniPupper_RR_FK.py` and `MiniPupper_RR_IK.py`. If you don't already have them, ask your instructor — they're early drafts and need a few fixes before they're lab-ready, which is exactly what Part 1 is about.
-
-You'll also want the robot up and reporting `/joint_states` and `/tf` by the end of this lab (real robot or simulation both work), so make sure bringup is running before Part 4.
+# Week 4 — Forward & Inverse Kinematics
 
 ---
 
-## Part 1 — Fixing the FK Script
+**Objectives:**
 
-Open `MiniPupper_RR_FK.py`. As written, it has a few rough edges that need fixing before it's usable in a lab setting:
-
-1. It uses `input()` to get joint angles interactively, and ends with `plt.show()` — both of those require an actual display. If you're SSH'd into the robot or running this somewhere headless, the script will just hang. We need it to take angles as arguments and save a plot to a file instead.
-2. There's a `print()` statement meant to show the joint angles in degrees using `%d°` formatting, but the values never actually get substituted in — it just prints the raw tuple.
-3. The link lengths in the script are leftover placeholders from early planning (`l1=5cm, l2=6cm`) — not the real Mini Pupper 2 geometry.
-
-### 1.1 — Update the Geometry Constants
-
-Find where the script defines link lengths and joint angles, and replace the placeholder values with the real ones:
-
-```python
-# Real Mini Pupper 2 front-right leg geometry, from the URDF
-L1 = 0.0502  # hip joint -> knee joint, meters
-L2 = 0.056   # knee joint -> foot contact, meters
-```
-
-### 1.2 — Fix the Headless Display Problem
-
-Find the `input()` calls. Replace them with command-line arguments using `sys.argv`, or with a function that takes `hip_angle` and `knee_angle` as parameters directly — your choice, but function parameters are simpler and easier to test repeatedly. Then find `plt.show()` and replace it with:
-
-```python
-plt.savefig('fk_result.png')
-print('Saved plot to fk_result.png')
-```
-
-### 1.3 — Fix the Broken Print Statement
-
-Find the print statement with the `%d°` formatting bug and fix it so it actually substitutes the angle values. (Hint: with `%`-style formatting, the values to substitute go in a tuple *after* the `%` operator — check that the tuple is actually being passed in, not just sitting next to the string.)
+1. Explain the difference between forward kinematics (FK) and inverse kinematics (IK).
+2. Compute a Mini Pupper 2 foot position from real hip and knee joint angles.
+3. Compute the joint angles needed to reach a target foot position (IK).
+4. Identify why the real robot's joint-angle convention differs from a textbook 2-link arm, and adjust for it.
+5. Cross-check hand-derived kinematics against the real robot's `/joint_states` and TF data.
 
 ---
 
-## Part 2 — The Hip Convention Problem
+**Reference Material:**
 
-Before you touch the FK *math* itself, let's confirm the problem the Overview described. The script likely has a forward kinematics function that looks something like this (textbook convention):
+- [Mini Pupper 2 URDF — leg geometry source](https://github.com/mangdangroboticsclub/mini_pupper_ros/blob/ros2-dev/mini_pupper_description/urdf/mini_pupper_2/mini_pupper_description.urdf.xacro)
+- Week 3 Lab — Teleop, RViz2 & TF Tree (you'll reuse `tf2_echo` here)
 
+---
+
+## Background
+
+This week you'll learn the two core problems every legged robot's controller has to solve, and solve them yourself, by hand, for one leg of the Mini Pupper 2.
+
+Picture one leg simplified to two rigid links connected by two joints. A hip and a knee, both rotating in the same plane. This is an RR model (R standing for revolute) ![revolute](images/Revolute.png).
+
+- **Forward kinematics (FK):** given the joint angles, where is the foot? Straightforward trig, one unique answer.
+- **Inverse kinematics (IK):** given a *target* foot position, what joint angles get it there? Harder — there can be zero, one, or two valid answers, and sometimes the target is simply out of reach.
+
+Here is a short [video](https://www.youtube.com/shorts/wCPYtaVuW2w) giving an explanation of the difference. Although it is animation related in the video I still think it was a great explanation.
+
+CHAMP solves IK continuously, many times a second, for all four legs, every time you send a `/cmd_vel` command. Now we get to do that by hand.
+
+We're using real measurements from the Mini Pupper 2's URDF, front-right leg:
+
+| Quantity | Value |
+|---|---|
+| l1 — hip joint → knee joint | 5.02 cm |
+| l2 — knee joint → foot contact | 5.6 cm |
+| Standing pose: hip angle | 0.994 rad |
+| Standing pose: knee angle | −1.767 rad |
+
+If you've seen a 2-link RR arm before, it's almost always drawn with joint 1's zero angle pointing along pos x axis (horizontal). ![RRArm](images/hipZero.png) The Mini Pupper 2's hip doesn't work that way, it's a hanging leg, not a horizontal arm. When the hip angle is 0, the upper leg points straight down, not forward. Plug real `/joint_states` values into the textbook formula and you'll get a wrong answer. You'll fix this yourself in Step 2.
+
+---
+ 
+## Forward Kinematics
+ 
+Everything else in this lab will be Python. Create a file that you'll keep adding to throughout the lab:
+ 
+```bash
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/fk_ik_explore.py
+```
+Run it anytime with:
+ 
+```bash
+python3 ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/fk_ik_explore.py
+```
+ 
+### Step 1 — Run the Textbook Formula and Watch What Happens
+ 
+The standard 2-link planar FK formula looks like this:
+ 
 ```python
 def forward_kinematics(hip, knee, l1, l2):
     x = l1 * math.cos(hip) + l2 * math.cos(hip + knee)
     z = l1 * math.sin(hip) + l2 * math.sin(hip + knee)
     return x, z
-```
-
-Run it with the real standing pose — `hip=0.994`, `knee=-1.767` — and look at the output. You should get a foot position that does *not* look like a leg standing under a robot's body (if you get a positive z, or an x value that seems way too large, that's the tell).
-
-**Lab notes — answer before continuing:**
-
-1. What (x, z) does the unmodified script give you for the standing pose?
-2. Does that match a robot leg that's bent at the knee and supporting weight underneath the body? Why or why not?
-
----
-
-## Part 3 — Deriving the Corrected Formula
-
-Here's the geometric fact from the Overview: at hip angle = 0, the upper leg points straight **down** (along −Z), not along +X like the textbook diagram assumes. We need a formula whose zero-reference actually matches that.
-
-### 3.1 — Work Out Where the Knee Joint Is
-
-Think of the upper leg as a vector of length `l1`, starting at the hip and currently pointing straight down (−Z direction) when hip=0. As the hip angle increases, the leg rotates away from straight-down.
-
-If you drew this on paper with −Z as your reference direction and rotated counterclockwise by angle `hip`, you'd find the vector's components are:
+x, z = forward_kinematics(hip, knee, l1, l2)
+print(f'x={x}, z={z}')
 
 ```
-knee_x = l1 · ( ? )
-knee_z = l1 · ( ? )
+ 
+Run it with the real standing pose — `hip=0.994`, `knee=-1.767`, `l1=0.0502`, `l2=0.056`. Defining the function isn't enough on its own — Python won't run anything inside it until something actually calls it, so add a call and a print at the bottom of your script:
+ 
+**Task 1:** What `(x, z)` does this give you? Does that look like a leg bent at the knee, supporting weight underneath the robot's body? Why or why not?
+ 
+
+```python
+import matplotlib
+matplotlib.use('Agg')  # headless-safe, no display needed even over SSH
+import matplotlib.pyplot as plt
+ 
+def plot_leg(foot, knee=None, filename='leg_plot.png'):
+    xs, zs, labels = [0], [0], ['hip']
+    if knee is not None:
+        xs.append(knee[0]); zs.append(knee[1]); labels.append('knee')
+    xs.append(foot[0]); zs.append(foot[1]); labels.append('foot')
+ 
+    reach = (l1 + l2) * 1.2  # a bit more than max leg reach, so nothing gets clipped
+ 
+    plt.figure(figsize=(5, 5))
+    plt.plot(xs, zs, 'o-', linewidth=2, markersize=10)
+    for x, z, label in zip(xs, zs, labels):
+        plt.annotate(label, (x, z), textcoords='offset points', xytext=(8, 8), fontsize=10)
+    plt.xlim(-reach, reach)
+    plt.ylim(-reach, reach)
+    plt.xlabel('x (m), forward')
+    plt.ylabel('z (m), up')
+    plt.gca().set_aspect('equal')
+    plt.grid(True)
+    plt.savefig(filename)
+    print(f'Saved {filename}')
 ```
+ 
+```python
+x, z = forward_kinematics(hip, knee, l1, l2)
+plot_leg((x, z), filename='step1.png')
+```
+ 
+Pull the saved image up and look at where the dot lands relative to the hip at the origin.
+ 
+### Step 2 — Derive the Corrected Formula
+ 
+At hip angle 0, the upper leg points straight down (−Z), not along +X. Think of the upper leg as a vector of length `l1` starting at the hip, currently pointing straight down. As the hip angle increases, the leg rotates away from straight-down.
 
-**TODO:** Fill in the two blanks above. Hint: start from the straight-down vector `(0, -1)` and apply a standard 2D rotation matrix by angle `hip`. You should end up with one term using `sin(hip)` and one using `cos(hip)`, each with a sign.
-
-### 3.2 — Extend to the Foot
-
-The knee joint works the same way relative to the upper leg — when `knee=0`, the lower leg is collinear with the upper leg (fully extended). So the *absolute* angle of the lower leg, relative to straight-down, is `hip + knee` (this part **does** match the textbook's additive-angle idea — it's only the hip's zero-reference that's different).
-
-**TODO:** Using the same pattern as 3.1, but with angle `(hip + knee)` instead of just `hip`, write the formula for the foot position relative to the knee, then add it to the knee position from 3.1 to get the full foot position relative to the hip:
-
+If you rotated the vector `(0, -1)` by angle `hip` using a standard 2D rotation, you'd get:
+ 
+```
+knee_x = l1 * ( ? )
+knee_z = l1 * ( ? )
+```
+  
+**Task 2:** Fill in the two blanks. Hint: apply a standard rotation matrix to `(0, -1)` by angle `hip`. You should end up with one term using `sin(hip)` and one using `cos(hip)`, each with a sign.
+ 
+The knee joint works the same way relative to the upper leg — when `knee=0`, the lower leg is collinear with the upper leg. So the lower leg's absolute angle relative to straight-down is `hip + knee`.
+ 
+**Task 3:** Using the same pattern, write the full corrected FK function:
+ 
 ```python
 def forward_kinematics(hip, knee, l1, l2):
-    knee_x = l1 * (___________)
-    knee_z = l1 * (___________)
-
-    foot_x = knee_x + l2 * (___________)
-    foot_z = knee_z + l2 * (___________)
-
+    knee_x = l1 * #Code here
+    knee_z = l1 * #Code here
+ 
+    foot_x = knee_x + l2 * #Code here
+    foot_z = knee_z + l2 * #Code here
+ 
     return foot_x, foot_z
 ```
-
-### 3.3 — Check Your Work
-
-Plug the real standing pose back in: `hip=0.994`, `knee=-1.767`, `l1=0.0502`, `l2=0.056`. You should get approximately:
-
-```
-foot_x ≈ -0.003 m
-foot_z ≈ -0.068 m
-```
-
-If you're off by more than a millimeter or two, check your signs — it's very easy to flip a `sin`/`cos` or drop a negative sign in this derivation, and that's a completely normal place to get stuck. Walk back through 3.1 step by step rather than guessing at sign flips.
-
-**Lab notes:**
-
-1. The foot ends up almost directly below the hip (x is tiny). Does that make sense for a standing robot? What would you expect x to look like instead if the robot were mid-stride, with this leg swung forward?
-2. The corrected formula and the textbook formula both use the *same* `hip + knee` additive structure for the second joint, but differ on the first. Why does that asymmetry exist — what's actually different about how the hip and knee joints are defined?
-
----
-
-## Part 4 — Fixing and Using the IK Script
-
-### 4.1 — Fix the Validation Bug
-
-Open `MiniPupper_RR_IK.py`. There's a leftover validation check that tests whether a value `!= float` after it's already been cast with `float()` — that check can never trigger, since the cast guarantees the type. Remove it, or replace it with a check that's actually meaningful (for example: checking whether the requested target position is even reachable, i.e. its distance from the hip is ≤ `l1 + l2`).
-
-### 4.2 — Update the IK Math to Match Your FK Derivation
-
-Just like the FK script, the IK script's law of cosines / geometry setup will assume the textbook hip convention unless you adjust it. The core IK approach (law of cosines to solve for the knee angle, then geometry to solve for the hip angle) stays the same — what changes is how the hip angle relates back to your corrected zero-reference from Part 3.
-
-This is the harder direction, so work through it with your lab partner and don't hesitate to ask for help here. The graders care more about whether your IK solution round-trips correctly (see 4.3) than whether you got there cleanly on the first try.
-
-### 4.3 — Round-Trip Test
-
-The best way to check IK is correct: feed its output straight back into your fixed FK function.
-
+ 
+Check your work: plugging in the standing pose should give approximately `foot_x ≈ -0.003 m`, `foot_z ≈ -0.068 m`. If you're off by more than a millimeter or two, check your signs and walk back through the derivation rather than guessing at sign flips.
+ 
+Now that you have `knee_x`/`knee_z` along the way to the foot, plot the full bent shape using the same `plot_leg` helper from Step 1:
+ 
 ```python
-# Pick any target foot position within reach
-target_x, target_z = -0.003, -0.068
+knee_x = l1 * -math.sin(hip)
+knee_z = l1 * -math.cos(hip)
+foot_x, foot_z = forward_kinematics(hip, knee, l1, l2)
+plot_leg((foot_x, foot_z), knee=(knee_x, knee_z), filename='step2.png')
+```
+ 
+Compare this against the single floating dot from Step 1.
 
+**Task 4:** The foot ends up almost directly below the hip. Does that make sense for a standing robot? What would you expect `foot_x` to look like instead if this leg were mid-stride, swung forward?
+ 
+---
+ 
+## Inverse Kinematics
+ 
+### Step 3 — Solve for Joint Angles Given a Target
+ 
+Now solve the harder direction: given a target foot position, find the joint angles that reach it. The standard approach uses the law of cosines to solve for the knee angle first, then geometry to back out the hip angle but just like FK, the hip angle you get back has to be expressed in this robot's convention.
+ 
+**Task 5:** Write `inverse_kinematics(target_x, target_z, l1, l2)`, returning `(hip, knee)`. The law of cosines step is the same as any 2-link IK derivation, but the final hip angle needs the same rotated reference frame from Step 2 applied in reverse.
+ 
+Before trusting your IK, add a real reachability check: the target's distance from the hip must be ≤ `l1 + l2`, or there's no solution.
+ 
+### Step 4 — Round-Trip Test
+ 
+The most reliable way to check IK is correct: feed its output straight back into your corrected FK function.
+ 
+```python
+target_x, target_z = -0.003, -0.068
+ 
 hip_solved, knee_solved = inverse_kinematics(target_x, target_z, L1, L2)
 foot_x, foot_z = forward_kinematics(hip_solved, knee_solved, L1, L2)
-
+ 
 print(f'Target:  ({target_x:.4f}, {target_z:.4f})')
 print(f'FK(IK):  ({foot_x:.4f}, {foot_z:.4f})')
 ```
+ 
+These should match to within a small floating-point tolerance.
 
-These two should match to within a small floating-point tolerance. If they don't, your IK has a bug — go back and check it before moving on.
-
-**Lab notes:** Try a target foot position that's farther forward (larger negative or positive x, your choice) and run the round-trip test again. Does it still work? Try a target that's clearly out of reach (farther than `l1 + l2` from the hip) — what does your script do? Does it crash, return garbage, or handle it gracefully?
-
+**Task 6:** Try a target foot position farther forward (a larger x value, your choice). Does the round-trip still hold? Now try a target clearly out of reach (farther than `l1 + l2` from the hip) — what does the function do?
+ 
 ---
-
-## Part 5 — Cross-Checking Against the Real Robot
-
-This is where Week 3's TF skills come back. With the robot standing still (real robot or simulation):
-
-### 5.1 — Read the Real Joint Values
-
+ 
+## Cross-Checking Against the Real Robot
+ 
+### Step 5 — Compare Against `/joint_states` and TF
+ 
+With the robot standing still (with bringup running), read the real joint values:
+ 
 ```bash
 ros2 topic echo /joint_states --once
 ```
-
-Find the entries for the front-right leg's hip and knee joints (check the `name` array to match them up — the order in `position` follows the order in `name`). Record the actual current values.
-
-### 5.2 — Feed Them Into Your FK Script
-
-Run your fixed FK script using these *live* values instead of the idealized standing pose from earlier. Note the foot position it computes.
-
-### 5.3 — Compare Against TF
-
-Use `tf2_echo` to check the real spatial relationship between the hip frame and the foot frame (check `view_frames` from last week's lab if you don't remember the exact frame names for this leg):
-
+ 
+Find the front-right leg's hip and knee entries (match them up using the `name` array — `position` follows the same order). Feed these live values into your FK function.
+ 
+Then check the real spatial relationship using TF:
+ 
 ```bash
 ros2 run tf2_ros tf2_echo rf1 rffoot
 ```
-
-**Lab notes:**
-
-1. How close is your FK script's computed foot position to what TF actually reports? They won't be identical — TF accounts for the small 3D offsets (abduction, the ~5mm y-offsets) that our simplified 2D planar model ignores. Is the gap roughly what you'd expect from ignoring those, or is it bigger than that?
-2. If the gap were large and unexplained, what would that tell you — a bug in your FK derivation, or a wrong assumption about the geometry?
+ 
+**Task 7:** How close is your FK script's computed foot position to what TF actually reports? 
+---
+ 
+## Looking Ahead: Classical vs. Learned Control
+ 
+This week's IK is the classical approach to legged locomotion. It's exactly what CHAMP does. Week 5 takes a fundamentally different path: a reinforcement-learned policy that never derives an equation at all — it learns, through trial and lots of simulated trial-and-error, what joint angles tend to produce good walking.
+ 
+**DELIVERABLE:** Answer the following.
+ 
+1. Your hand-derived IK gives an exact, guaranteed-correct answer for a reachable target (when one exists). What could a learned policy give up by not deriving exact equations, and what does it gain in return?
 
 ---
-
-## Stretch Goal (Optional)
-
-The standing-pose foot position we derived (6.75 cm below the hip) is a bit lower than you might expect for this robot's actual standing height. Investigate: does the foot link have its own radius or thickness that would add a bit more clearance? Look at the collision geometry in the URDF or the mesh file for the foot. This kind of "the simplified model gets you close, but not exact, and here's the physical reason why" gap is completely normal in robotics — the goal isn't to make the numbers match by force, but to understand *why* they don't match perfectly.
-
+ 
+## Tasks
+ 
+1. Textbook-formula output at the standing pose, and explanation of why it's wrong (Step 1).
+2. Corrected FK derivation, filled in and verified against the expected `(-0.003, -0.068)` result (Step 2).
+3. Written answers on foot-forward expectation and the hip/knee asymmetry (Step 2).
+4. Working `inverse_kinematics` function with a reachability check (Step 3).
+5. Round-trip test results, including the out-of-reach case (Step 4).
+6. Real-robot cross-check: FK output vs. `tf2_echo rf1 rffoot`, with explanation of any gap (Step 5).
+7. Classical-vs-learned discussion, 3 questions (Looking Ahead).
 ---
-
-## What's Next
-
-Week 5 shifts from "derive the exact equations" to a fundamentally different approach: training a control policy through reinforcement learning instead of solving IK by hand. Keep your FK function around — it'll be useful as a sanity check against the learned policy's behavior later in the course.
+ 
+## Troubleshooting
+ 
+??? question "My textbook FK gives a foot position way above the robot, or off to one side"
+    That's the expected (wrong) result from Step 1 — it's not a bug, it's the point of that step. Move on to the corrected derivation in Step 2.
+ 
+??? question "My corrected FK doesn't match the expected (-0.003, -0.068)"
+    Check your signs first — it's very easy to flip a `sin`/`cos` or drop a negative sign in this derivation. Re-derive `knee_x`/`knee_z` from the rotated `(0,-1)` vector step by step rather than guessing at which sign to flip.
+ 
+??? question "IK round-trip doesn't match the original target"
+    Confirm your reachability check isn't silently passing through an unreachable target. Then check that the hip angle you return from IK is expressed in the same rotated convention your corrected FK expects — a common bug is solving IK in the textbook frame and forgetting to convert back.
+ 
+??? question "`/joint_states` doesn't show clearly labeled hip/knee values"
+    Check the `name` array in the message for entries like `rf1_rf2` and `rf2_rf3` — the `position` array follows the same order. If you're not sure which is which, cross-reference with `ros2 run tf2_tools view_frames` from Week 3.
+ 
+??? question "tf2_echo rf1 rffoot returns nothing"
+    Confirm `robot_state_publisher` is running and bringup is fully up (`ros2 node list | grep robot_state_publisher`). These are both fixed-offset frames published via `/tf_static`, not `/tf` — if `/tf_static` isn't publishing, neither frame will resolve.
+ 
+---

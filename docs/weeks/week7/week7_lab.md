@@ -26,7 +26,7 @@
 
 In Week 3 you drove a square and watched your `position_tracker` node's reported distance-from-start fail to return to zero. That gap was odometry drift — `/odom` alone has no way to correct itself, because it only ever integrates small errors forward in time.
 
-SLAM (Simultaneous Localization and Mapping) fixes this by bringing the lidar into the loop. As the robot moves, Cartographer matches each new lidar scan against the map it's built so far. When the robot revisits a place it's seen before, the scan match reveals exactly how far the odometry estimate has drifted — and Cartographer corrects for it. This is the actual mechanism behind "the robot knows where it is," not just "the robot knows how far its wheels (or legs) think they've moved."
+SLAM (Simultaneous Localization and Mapping) fixes this by bringing the lidar into the loop. As the robot moves, Cartographer matches each new lidar scan against the map it's built so far. When the robot revisits a place it's seen before, the scan match reveals exactly how far the odometry estimate has drifted and Cartographer corrects for it.
 
 Cartographer is split into two ROS2 nodes with different jobs:
 
@@ -38,19 +38,19 @@ Cartographer is split into two ROS2 nodes with different jobs:
 !!! note "Why two nodes?"
     Cartographer's own documentation notes that generating the occupancy grid from submaps is comparatively expensive, so map updates publish on the order of seconds, not every scan. This is by design — if your map in RViz seems to "catch up" in chunks rather than updating instantly, that's expected, not a bug.
 
-Looking at this course's `slam.lua` config, a few choices are worth understanding rather than just copying:
+Looking at `slam.lua` config, a few choices are worth understanding rather than just copying:
 
 | Parameter | Value | Why it matters |
 |---|---|---|
 | `map_frame` | `"map"` | The fixed frame the whole map lives in |
-| `tracking_frame` | `"imu_link"` | The frame Cartographer tracks the robot's pose *as* |
+| `tracking_frame` | `"imu_link"` | The frame Cartographer tracks the robot's pose "as" |
 | `published_frame` | `"odom"` | The frame Cartographer publishes corrections relative to |
 | `use_odometry` | `true` | Cartographer fuses your `/odom` estimate with scan matching |
 | `use_imu_data` | `false` | The IMU is *not* used for scan matching on this robot |
 | `min_range` / `max_range` | `0.02` / `12` | Matches the LD19's actual spec range exactly (Week 6) |
 
 !!! warning "Run this on your PC, not the robot"
-    `cartographer_node` is computationally heavy — scan matching and pose graph optimization are real-time optimization problems, not lightweight callbacks. The CM4 is already busy running bringup and servo control; the whole architecture assumes `/scan`, `/odom`, `/tf`, and `/imu/data` get streamed over the network to a separate machine running Cartographer. That means Week 3's networking lessons matter a lot more this week — if your setup runs through a VM with bridged networking, remember that `ros2 topic list` succeeding only confirms *discovery*, not actual data flow. If Cartographer isn't reacting to motion, that's the first thing to check.
+    `cartographer_node` is computationally heavy — scan matching and pose graph optimization are real-time optimization problems, not lightweight callbacks. The CM4 is already busy running bringup and servo control; the whole architecture assumes `/scan`, `/odom`, `/tf`, and `/imu/data` get streamed over the network to a separate machine running Cartographer. 
 
 ---
 
@@ -58,22 +58,23 @@ Looking at this course's `slam.lua` config, a few choices are worth understandin
 
 ### Step 1 — Confirm Data Is Actually Flowing
 
-Don't just check that the right topics exist — confirm they're actually carrying data:
+Confirm that topics exist and are carrying data
 
 ```bash
+ros2 topic list
 ros2 topic hz /scan
 ros2 topic hz /odom
 ros2 topic hz /tf
 ros2 topic hz /imu/data
 ```
 
-If any of these show nothing despite `ros2 topic list` listing them, that's a discovery-without-transport problem, not a missing-node problem. Try `ros2 daemon stop && ros2 daemon start` first; if that doesn't fix it, it's likely a multicast/DDS configuration issue worth raising with your instructor.
+If any of these show nothing despite `ros2 topic list` listing them, that's a discovery-without-transport problem. Try `ros2 daemon stop && ros2 daemon start` first; if that doesn't fix it, it's likely a multicast/DDS configuration or wifi issue. 
 
 **Task 1:** Paste the `ros2 topic hz` output for all four topics above.
 
 ### Step 2 — Launch Cartographer
 
-On your PC (not the robot), with bringup already running:
+On your PC (not the robot), with bringup running on robot:
 
 ```bash
 ros2 launch mini_pupper_slam slam.launch.py
@@ -81,16 +82,13 @@ ros2 launch mini_pupper_slam slam.launch.py
 
 This brings up `cartographer_node`, `cartographer_occupancy_grid_node`, and RViz with a SLAM-specific config, all in one launch file.
 
-!!! note "Simulation vs. real robot"
-    The launch file defaults to `use_sim_time:=False`. If you're working in Gazebo, launch with `ros2 launch mini_pupper_slam slam.launch.py use_sim_time:=true` instead, so Cartographer uses the simulation clock rather than wall-clock time.
-
 ---
 
 ## Building the Map
 
 ### Step 3 — Drive and Watch the Map Build
 
-With Cartographer running, drive the robot around with `teleop_twist_keyboard` (Week 3) and watch RViz. Drive slowly, avoid rotating and translating at the same time if you can help it, and try to cover the full space you want mapped — including driving back through areas you've already seen, since that's what gives Cartographer loop-closure opportunities to correct drift.
+With Cartographer running, drive the robot around with `teleop_twist_keyboard` (Week 3) and watch RViz. Try to cover the full space you want mapped including driving back through areas you've already seen, since that's what gives Cartographer loop-closure opportunities to correct drift.
 
 **Task 2:** Screenshot the map after about 30 seconds of driving, and again once you've covered the full space. Describe what changed between the two — not just "more area covered," but anything that looks like it got *corrected* (walls that straightened up, edges that snapped into alignment).
 
@@ -121,9 +119,9 @@ parameters=[
 ]
 ```
 
-`-resolution` and `-publish_period_sec` are written as if they're command-line flags, but they're placed inside `parameters=[...]`, which is how you declare ROS2 *parameters* — and parameter names don't normally start with a dash. Command-line-style flags for a node usually belong in a separate `arguments=[...]` list instead.
+`-resolution` and `-publish_period_sec` are written as if they're command-line flags, but they're placed inside `parameters=[...]`, which is how you declare ROS2 parameters and parameter names don't normally start with a dash. Command-line-style flags for a node usually belong in a separate `arguments=[...]` list instead.
 
-**Task 4:** Don't take this at face value — check it. Compare the `info.resolution` value from your Step 4 echo against the `0.05` the launch file claims to be setting. Do they match? If they match, is that necessarily proof the parameter is being applied, or could it just be the node's own default? What would you change in the launch file to pass this as an actual command-line argument instead?
+**Task 4:** Compare the `info.resolution` value from your Step 4 echo against the `0.05` the launch file claims to be setting. Do they match? If they match, is that necessarily proof the parameter is being applied, or could it just be the node's own default? What would you change in the launch file to pass this as an actual command-line argument instead?
 
 ---
 
