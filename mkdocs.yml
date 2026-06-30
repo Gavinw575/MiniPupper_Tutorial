@@ -77,8 +77,7 @@ nav:
       - Verification Checklist: setup/verification.md
       - Troubleshooting: setup/troubleshooting.md
   - Course:
-      - Lab 1 — SSH & First Bringup: weeks/week1/week1_lab.md
-      - Lab 1.1 - SSH & OAK D Lite setup: weeks/week1/OAKlab.md
+      - Lab 1 - SSH & OAK D Lite setup: weeks/week1/OAKlab.md
       - Lab 2 — Nodes, Topics & cmd_vel: weeks/week2/week2_lab.md
       - Lab 3 — Teleop, RViz2 & TF Tree: weeks/week3/week3_lab.md
       - Lab 4 — RR Model, FK & IK Scripts: weeks/week4/week4_lab.md

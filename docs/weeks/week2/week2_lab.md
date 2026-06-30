@@ -25,7 +25,7 @@
 
 ## Background
 
-In ROS2, a node is a single process that can do multiple things like reading a sensor, controlling a motor, running an algorithm, etc... Nodes talk to each other by passing messages over topics. A node that sends messages is called a publisher. A node that receives them is called a subscriber. A single node can be both at the same time.
+In ROS2, a node is a single process that can do multiple things like reading a sensor, controlling a motor, running an algorithm, etc... Nodes talk to each other by passing messages over topics. A node that sends a message is called a publisher. A node that receives them is called a subscriber. A single node can be both at the same time.
 
 Topics have different types and every topic carries one specific message type. `/cmd_vel` always carries `geometry_msgs/Twist` messages. `/imu/data` always carries `sensor_msgs/Imu` messages. A node has to use the correct type or ROS2 won't let it connect.
 

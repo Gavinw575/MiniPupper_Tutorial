@@ -26,14 +26,14 @@
 - [Nav2 documentation](https://docs.nav2.org/)
 - [Simple Commander API](https://docs.nav2.org/commander_api/index.html)
 - [mini_pupper_navigation package (GitHub)](https://github.com/mangdangroboticsclub/mini_pupper_ros/tree/ros2-dev/mini_pupper_navigation)
-- Week 3 Lab — Teleop, RViz2 & TF Tree (odometry drift — this week solves that problem)
-- Week 6 Lab — LD19 Driver & LaserScan (Cartographer consumes the same `/scan` data you inspected there)
+- Week 3 Lab — Teleop, RViz2 & TF Tree 
+- Week 6 Lab — LD19 Driver & LaserScan 
 
 ---
 
 ## Background
 
-In Week 3 you drove a square and watched your `position_tracker` node's reported distance-from-start fail to return to zero. That gap was odometry drift — `/odom` alone has no way to correct itself, because it only ever integrates small errors forward in time.
+You've learned to drive in a square and watch as your `position_tracker` nodes report a distacne from start that failed to return to zero. That gap that you saw was due to odometry drift as `/odom` alone has no way to correct itself because it only every integrates small errors forward in time.
 
 SLAM (Simultaneous Localization and Mapping) fixes this by bringing the lidar into the loop. As the robot moves, Cartographer matches each new lidar scan against the map it's built so far. When the robot revisits a place it's seen before, the scan match reveals exactly how far the odometry estimate has drifted and Cartographer corrects for it.
 
@@ -47,7 +47,7 @@ Cartographer is split into two ROS2 nodes with different jobs:
 !!! note "Why two nodes?"
     Cartographer's own documentation notes that generating the occupancy grid from submaps is comparatively expensive, so map updates publish on the order of seconds, not every scan. This is by design — if your map in RViz seems to "catch up" in chunks rather than updating instantly, that's expected, not a bug.
 
-Looking at `slam.lua` config, a few choices are worth understanding rather than just copying:
+Looking at `slam.lua` config, a few choices are worth understanding:
 
 | Parameter | Value | Why it matters |
 |---|---|---|
@@ -77,7 +77,7 @@ ros2 topic hz /tf
 ros2 topic hz /imu/data
 ```
 
-If any of these show nothing despite `ros2 topic list` listing them, that's a discovery-without-transport problem. Try `ros2 daemon stop && ros2 daemon start` first; if that doesn't fix it, it's likely a multicast/DDS configuration or wifi issue.
+If any of these show nothing despite `ros2 topic list` listing them, try `ros2 daemon stop && ros2 daemon start` first; if that doesn't fix it, it's likely a multicast/DDS configuration or wifi issue.
 
 **Task 1:** Paste the `ros2 topic hz` output for all four topics above.
 
@@ -114,7 +114,7 @@ ros2 topic echo /map --once
 
 Look specifically at the `info` field — `resolution`, `width`, `height`, and `origin`.
 
-**Task 3:** In your own words, explain what `resolution` means for this message, and what a single value in the `data` array represents.
+**Task 3:** Explain what `resolution` means for this message, and what a single value in the `data` array represents.
 
 ### Step 5 — Verify the Launch File's Claims
 
@@ -145,7 +145,7 @@ ros2 run nav2_map_server map_saver_cli -f ~/map
 ```
 
 !!! warning "If this hangs or saves an empty map"
-    This is a real gotcha from past runs of this course: `map_saver_cli` needs to subscribe to `/map` with the same QoS durability Cartographer publishes it with. If the basic command above doesn't work, add the matching QoS override explicitly:
+    `map_saver_cli` needs to subscribe to `/map` with the same QoS durability Cartographer publishes it with. If the basic command above doesn't work, add the matching QoS override explicitly:
     ```bash
     ros2 run nav2_map_server map_saver_cli -f ~/map --ros-args -p map_subscribe_transient_local:=true
     ```
@@ -158,20 +158,7 @@ This produces two files in your home directory: `map.pgm` (the actual image of t
 
 ---
 
-## Looking Ahead
-
-You've now closed the loop on Week 3's odometry drift problem — Cartographer's scan matching corrects exactly the kind of error your `position_tracker` node exposed. Up next: Nav2 picks up `map.yaml` directly — its `map_server` loads it back in, AMCL localizes the robot within it, and costmaps get built on top of it for path planning.
-
-**DELIVERABLE:** Answer the following in your lab writeup:
-
-1. The robot has a working IMU, but `use_imu_data` is set to `false` in `slam.lua` for this setup. Look at the official Cartographer documentation's discussion of when IMU data helps 2D SLAM versus 3D SLAM. Based on that, propose a plausible reason this robot's config disables it for 2D scan matching, and what you'd want to check before turning it on.
-2. Once Nav2 has loaded your saved map and the robot is localized within it, the map itself doesn't change anymore — it's frozen. What would have to be different about the SLAM pipeline if you wanted the robot to keep updating the map *while* also navigating autonomously?
-
----
-
-## Background
-
-Nav2 is a pipeline, not a single node. Here's the chain, in order:
+Nav2 is a pipeline. Here's the chain, in order:
 
 1. **`map_server`** loads your saved `map.yaml` from above — the frozen, static map.
 2. **AMCL** (Adaptive Monte Carlo Localization) figures out where the robot actually is *within* that map, using a particle filter: thousands of pose hypotheses, each scored against how well the live lidar scan matches the map from that hypothetical position. Hypotheses that don't match the scan get pruned; ones that do survive and multiply.
@@ -192,9 +179,6 @@ This course's actual configuration (`mini_pupper_navigation/param/real_table.yam
 
 !!! note "Why a rectangular footprint, not a circle?"
     Many Nav2 tutorials use a single `robot_radius` value, which treats the robot as a circle for collision checking. This config uses an explicit `footprint` polygon instead — a better fit for a quadruped body that's clearly longer than it is wide.
-
-!!! warning "Nav2's velocity output isn't what actually reaches the legs"
-    Look at `mini_pupper_navigation/launch/navigation_smacplanner.launch.py`: Nav2's `cmd_vel` output is deliberately remapped to `/cmd_vel_navigation2`, and a separate node, `nav_vel_scaler` (in `mini_pupper_driver`), subscribes to that and republishes to the real `/cmd_vel` — scaled by **1.7× on `linear.x`, 2.0× on `linear.y`, and 2.0× on `angular.z`**. So if DWB decides to command 0.20 m/s forward (its configured `max_vel_x`), the robot actually receives a command for 0.34 m/s. You'll investigate this directly in Step 12.
 
 ---
 
@@ -345,29 +329,6 @@ ros2 run mini_pupper_labs waypoint_patrol
 
 ---
 
-## Investigating the Velocity Scaler
-
-### Step 12 — Confirm the Scaling Factors
-
-With Nav2 actively navigating (either from Step 10 or Step 11), open two terminals and watch both sides of the scaler:
-
-```bash
-ros2 topic echo /cmd_vel_navigation2
-ros2 topic echo /cmd_vel
-```
-
-**Task 12:** Compare a few matched pairs of values between the two topics. Do they match the 1.7×/2.0×/2.0× factors described in the Background? Then answer: DWB is configured with `max_vel_x: 0.20` — presumably a deliberately conservative limit for safe planning around the costmap's safety margins. If the actual command reaching the robot is scaled up to as much as 0.34 m/s, what risk does that introduce near obstacles that the costmap's inflation radius was tuned assuming the unscaled speed?
-
----
-
-## Looking Ahead
-
-You can now get the robot from one place to another autonomously. What you can't do yet is have it recognize *what's* at the destination — that's Week 9, using the OAK-D Lite camera and YOLOv8.
-
-**DELIVERABLE:** In your lab writeup, briefly describe one limitation of this week's setup that bothered you while testing — for example, the requirement to start in the exact same pose as SLAM mapping, or the fixed/frozen map not updating as the room changes. Pick one, and propose (in a few sentences, no need to implement it) what would need to change in the pipeline to address it.
-
----
-
 ## Tasks
 
 1. `ros2 topic hz` output for `/scan`, `/odom`, `/tf`, `/imu/data` (Step 1).
@@ -376,13 +337,11 @@ You can now get the robot from one place to another autonomously. What you can't
 4. Resolution verification: does the launch file's claimed `0.05` match reality, and how would you fix the launch file if not (Step 5).
 5. `map.yaml` contents, mapped to the corresponding `OccupancyGrid.info` fields (Step 6).
 6. `map.pgm` viewed as an image, compared against the actual driven space (Step 6).
-7. Looking Ahead discussion, 2 questions (IMU / frozen map).
 8. Particle cloud before/after convergence (Step 8).
 9. Local costmap reacting to a temporary obstacle the global costmap doesn't show (Step 9).
 10. Successful Nav2 goal execution, with explanation of any path deviation (Step 10).
 11. Completed `waypoint_patrol.py` and a video of the route result (Step 11).
 12. Velocity scaling verification and the inflation-radius risk discussion (Step 12).
-13. Looking Ahead: one limitation and a proposed fix (Looking Ahead).
 
 ---
 

@@ -21,7 +21,7 @@
 
 ## Background
 
-This week you'll learn the two core problems every legged robot's controller has to solve, and solve them yourself, by hand, for one leg of the Mini Pupper 2.
+Now we learn about the some of the two main problems that every legged robot's controller has to solve, and get to solve them ourselfs by hand for one leg of the Pupper.
 
 Picture one leg simplified to two rigid links connected by two joints. A hip and a knee, both rotating in the same plane. This is an RR model (R standing for revolute) ![revolute](images/Revolute.png).
 
