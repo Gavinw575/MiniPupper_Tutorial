@@ -1,156 +1,385 @@
-# Week 9 — OAK-D Lite Camera & YOLOv8 Inference
+# Week 9 — OAK-D Lite, On-Device YOLO & Person Tracking
 
 ---
 
 **Objectives:**
 
-1. Recap how the OAK-D Lite is already verified working (Week 1), and understand the architectural choice between host-side and on-device inference.
-2. Write a ROS2 node that runs YOLOv8 object detection on the live camera feed.
-3. Publish and visualize annotated detection results.
-4. Investigate the OAK-D Lite's on-device inference alternative and compare it to host-side inference.
+1. Understand the difference between host-side and on-device inference, and why the OAK-D Lite's VPU changes the tradeoff.
+2. Write a DepthAI pipeline that runs YOLOv6-nano on the camera's onboard VPU and publishes detections as a ROS2 topic.
+3. Display live tracked detections on the robot's LCD screen.
+4. Write a movement node that subscribes to detections and publishes `/cmd_vel` to make the robot follow a person.
 
 ---
 
 **Reference Material:**
 
-- [Ultralytics YOLOv8 documentation](https://docs.ultralytics.com/)
-- [cv_bridge documentation](https://docs.ros.org/en/humble/p/cv_bridge/)
-- [depthai-ros (GitHub)](https://github.com/luxonis/depthai-ros)
-- Week 1 Lab — Setup, Orientation & First Bringup (the camera bring-up this week builds on)
+- [DepthAI Python API v3 documentation](https://docs.luxonis.com/software/depthai/manual/)
+- [Luxonis Model Zoo](https://models.luxonis.com/)
+- [mini_pupper_interfaces (GitHub)](https://github.com/mangdangroboticsclub/mini_pupper_ros/tree/ros2-dev/mini_pupper_interfaces)
+- [geometry_msgs/Twist](https://docs.ros2.org/humble/api/geometry_msgs/msg/Twist.html)
+- Week 3 Lab — Teleop & cmd_vel (the `/cmd_vel` interface you'll publish to this week)
 
 ---
 
 ## Background
 
-Week 1 got the OAK-D Lite publishing `/camera/image_raw`. This week is about doing something with that feed: detecting objects in it with YOLOv8.
+Every week up to now has put inference workloads on the host machine — your PC runs Cartographer, your PC runs Nav2, your PC ran YOLO in the old Week 9 draft. The OAK-D Lite changes that option. It has an onboard **Myriad X VPU** (Vision Processing Unit) that can run compiled neural networks directly on the camera, before any frame data even travels over USB. The CM4 only receives small structured results — bounding boxes, class IDs, confidence scores — not video frames.
 
-There's a real architectural choice buried in "run YOLO on the camera feed," and it's worth being deliberate about rather than just picking the first thing that works:
+For the Mini Pupper 2, this matters a lot. The CM4 is a low-power ARM board. Streaming 640×400 frames off the camera and running inference on them on the CM4 would be a dead end — too slow to be useful. Running the same network on the VPU and sending only detection results over USB takes almost no CM4 CPU time at all.
 
-- **Host-side inference** — a ROS2 node subscribes to `/camera/image_raw`, runs the YOLO model on each frame using a regular CPU (or GPU, if available), and publishes the result. Simple, standard ROS2 node structure, but the inference workload runs wherever the node runs.
-- **On-device inference** — the OAK-D Lite's onboard Myriad X VPU runs a compiled neural network *directly on the camera*, before any frame data even reaches a host CPU. This is the camera's actual differentiating feature over a plain USB webcam — but it requires building a DepthAI pipeline with a model compiled specifically for the VPU, not just pointing it at a `.pt` file.
+This week's pipeline looks like this:
 
-This week's required exercise uses host-side inference, but run it **on your PC, not the robot's CM4** — the same reasoning as SLAM and Nav2 in Weeks 7–8: the CM4 is an ARM board with limited compute, and `ultralytics` pulls in PyTorch as a dependency, which is a heavier, slower install on ARM than on a normal x86 PC. Your `/camera/image_raw` topic already streams over the network from the robot; this week's node just subscribes to it from the PC side, the same way Cartographer and Nav2 did.
+```
+OAK-D VPU:   Camera → YOLOv6-nano → ObjectTracker → TrackingArray (USB)
+Robot (CM4): oak_detection_publisher.py → publishes /tracking_array (ROS2)
+PC:          movement_node.py → subscribes /tracking_array → publishes /cmd_vel
+Robot:       stanford_controller receives /cmd_vel → moves
+Robot LCD:   live annotated frame from VPU → ST7789 display
+```
 
-!!! note "Why this matters as a real choice, not just an exercise"
-    For a resource-constrained robot, the question of *where* inference happens isn't academic — it directly trades off latency, network bandwidth, and host compute load. Step 5 has you investigate the on-device path directly so you can compare, not just take this tradeoff on faith.
+The `movement_node` runs on the PC, not the robot — the same reason SLAM and Nav2 ran on the PC. All computation heavier than "forward detections over ROS2" lives off the CM4.
+
+!!! note "DepthAI v3 API"
+    This lab uses the **DepthAI v3 Pipeline API** (`pipeline.create(node).build(...)`). The v2 API looks similar but is meaningfully different — if you find examples online that use `pipeline.createNeuralNetwork()` or `pipeline.createColorCamera()` without `.build()`, they're v2 and won't work here. Check the version: `python3 -c "import depthai; print(depthai.__version__)"` — you should see `3.x.x`.
 
 ---
 
 ## Setup
 
-### Step 1 — Confirm the Camera Feed Is Still Live
+### Step 1 — Confirm DepthAI Is Installed and the Camera Is Recognized
 
-With bringup running on the robot:
-
-```bash
-ros2 topic hz /camera/image_raw
-```
-
-If this shows nothing from your PC, this is the same discovery-vs-transport issue you've hit before — check your DDS configuration before assuming the camera itself has a problem.
-
-### Step 2 — Test YOLOv8 Standalone First
-
-On your PC, install Ultralytics:
+On the robot:
 
 ```bash
-pip install ultralytics
+python3 -c "import depthai; print(depthai.__version__)"
 ```
 
-Before writing any ROS2 code, test it standalone — this is the same debugging philosophy from Week 1's camera setup: confirm the library itself works in isolation before wiring it into ROS2, so you know which layer a problem belongs to if something breaks later.
+Check that the OAK-D Lite shows up over USB:
 
-```python
-from ultralytics import YOLO
-
-model = YOLO('yolov8n.pt')  # downloads automatically on first run
-results = model('https://ultralytics.com/images/bus.jpg')
-results[0].show()
+```bash
+lsusb | grep 03e7
 ```
 
-**Task 1:** Confirm this runs and shows you a detection result. What objects did it find in the test image, and with what confidence scores?
+You should see a line with `03e7` — that's Luxonis's USB vendor ID. If it doesn't appear, check the udev rule is in place:
+
+```bash
+cat /etc/udev/rules.d/80-movidius.rules
+```
+
+It should contain: `SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"`
+
+**Task 1:** Paste both the depthai version and the `lsusb` output confirming the camera is recognized.
 
 ---
 
-## Building the Detector
+## Building the OAK-D Detection Publisher
 
-### Step 3 — Write the YOLO Detector Node
+### Step 2 — Understand the Pipeline Structure
 
-Create the file:
+Before writing any code, look at the DepthAI node types you'll use:
 
 ```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/yolo_detector.py
+python3 -c "import depthai as dai; help(dai.node.ColorCamera)" 2>/dev/null | head -30
 ```
 
-Fill in the starter code below. `# TODO` marks what you need to write.
+The three DepthAI nodes you'll wire together:
+- **ColorCamera** — captures frames from the RGB sensor
+- **MobileNetDetectionNetwork** (or **YoloDetectionNetwork**) — runs a neural net on the VPU, outputs bounding boxes
+- **ObjectTracker** — keeps track of individual detected objects across frames, assigns persistent IDs
+
+They connect like a pipeline: camera frames → detection network → object tracker → your output queue.
+
+### Step 3 — Write the OAK-D Detection Publisher
+
+Create the file on the robot:
+
+```bash
+touch ~/oak_detection_publisher.py
+```
+
+Fill in the starter code below. `# Task:` marks what you need to write.
 
 ```python
 #!/usr/bin/env python3
 """
-yolo_detector.py
+oak_detection_publisher.py
 
-Subscribes to /camera/image_raw, runs YOLOv8 object detection on each
-frame, draws the results, and republishes an annotated image.
+Runs YOLOv6-nano on the OAK-D Lite's onboard VPU.
+Publishes detections as a TrackingArray on /tracking_array.
+Drives the ST7789 LCD directly with annotated frames.
+
+Run on the robot (not the PC).
 """
 
-import cv2
+import depthai as dai
+import numpy as np
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image
-from cv_bridge import CvBridge
-from ultralytics import YOLO
+
+from mini_pupper_interfaces.msg import TrackingArray, Tracking
+
+# DepthAI model zoo slug — downloads and caches on first run
+MODEL_SLUG  = "yolov6-nano"
+PERSON_CLASS_ID = 0   # COCO class 0 = person
+
+# LCD display size
+LCD_W, LCD_H = 320, 240
 
 
-class YoloDetectorNode(Node):
+class OakDetectionPublisher(Node):
 
     def __init__(self):
-        super().__init__('yolo_detector')
+        super().__init__('oak_detection_publisher')
 
-        self.bridge = CvBridge()
+        # Task: Create a publisher for TrackingArray messages on '/tracking_array'
+        # with a queue size of 10.
+        self.publisher = # YOUR CODE HERE
 
-        # TODO: Load a YOLOv8 model. The smallest/fastest model is a good
-        # starting point for a CPU-only pipeline.
-        # Hint: YOLO('yolov8n.pt') — already cached from Step 2.
-        self.model = # YOUR CODE HERE
+        self._init_display()
+        self._build_pipeline()
+        self.get_logger().info('OakDetectionPublisher started — VPU inference running')
 
-        self.subscription = self.create_subscription(
-            Image, '/camera/image_raw', self.image_callback, 10
-        )
-        self.publisher = self.create_publisher(
-            Image, '/yolo/image_annotated', 10
-        )
+    # ------------------------------------------------------------------
+    # Display setup
+    # ------------------------------------------------------------------
 
-        self.get_logger().info('YoloDetectorNode started!')
+    def _init_display(self):
+        """Initialise the ST7789 LCD on the robot's front panel."""
+        try:
+            from MangDang.LCD.ST7789 import ST7789
+            self.lcd = ST7789()
+            self.lcd_available = True
+        except Exception as e:
+            self.get_logger().warn(f'LCD not available: {e}')
+            self.lcd_available = False
 
-    def image_callback(self, msg: Image):
-        # TODO: Convert the incoming ROS Image message into an OpenCV
-        # (numpy) image so YOLO can process it.
-        # Hint: self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-        cv_image = # YOUR CODE HERE
+    # ------------------------------------------------------------------
+    # DepthAI pipeline
+    # ------------------------------------------------------------------
 
-        # TODO: Run the model on the frame. Calling the model directly
-        # as a function — self.model(cv_image) — returns a list of
-        # Results objects, one per image passed in. You only passed one.
-        results = # YOUR CODE HERE
+    def _build_pipeline(self):
+        pipeline = dai.Pipeline()
 
-        for result in results:
-            for box in result.boxes:
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                confidence = float(box.conf[0])
-                class_id = int(box.cls[0])
-                class_name = self.model.names[class_id]
+        # Task: Create a ColorCamera node on the pipeline.
+        # Set its preview size to (640, 400) and set interleaved to False.
+        # Hint: cam = pipeline.create(dai.node.ColorCamera)
+        #        cam.setPreviewSize(w, h)
+        #        cam.setInterleaved(False)
+        cam = # YOUR CODE HERE
 
-                cv2.rectangle(cv_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                label = f'{class_name} {confidence:.2f}'
-                cv2.putText(cv_image, label, (x1, max(y1 - 10, 0)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        # Task: Create a YoloDetectionNetwork node.
+        # Load the model from the Luxonis model zoo using:
+        #   nn = pipeline.create(dai.node.YoloDetectionNetwork)
+        #   nn_config = dai.NNModelDescription(MODEL_SLUG)
+        #   nn.build(cam.preview, nn_config)
+        nn = # YOUR CODE HERE
 
-        annotated_msg = self.bridge.cv2_to_imgmsg(cv_image, encoding='bgr8')
-        annotated_msg.header = msg.header
-        self.publisher.publish(annotated_msg)
+        # Task: Create an ObjectTracker node and connect it to the
+        # detection network output.
+        # Hint:
+        #   tracker = pipeline.create(dai.node.ObjectTracker)
+        #   tracker.build(
+        #       inputImageFrame=cam.preview,
+        #       inputDetections=nn.out
+        #   )
+        tracker = # YOUR CODE HERE
+
+        # Get the tracklet output queue from the object tracker.
+        # passthroughTrackerFrame gives us annotated frames for the LCD.
+        self.tracklets_queue = tracker.out.createOutputQueue()
+        self.frame_queue     = tracker.passthroughTrackerFrame.createOutputQueue()
+
+        self.device = dai.Device(pipeline)
+        self.get_logger().info('DepthAI pipeline built and device opened')
+
+    # ------------------------------------------------------------------
+    # Main loop — call this from main() after rclpy.spin_once
+    # ------------------------------------------------------------------
+
+    def poll(self):
+        """Pull one batch of results from the VPU and publish."""
+        tracklets_msg = self.tracklets_queue.tryGet()
+        frame_msg     = self.frame_queue.tryGet()
+
+        if frame_msg is not None and self.lcd_available:
+            self._update_lcd(frame_msg)
+
+        if tracklets_msg is None:
+            return
+
+        tracklets = tracklets_msg.tracklets
+
+        # Task: Build a TrackingArray message from the tracklets.
+        # For each tracklet where tracklet.label == PERSON_CLASS_ID:
+        #   - Create a Tracking() message
+        #   - Set tracking.center_x  = (roi.xmin + roi.xmax) / 2   (normalized 0–1)
+        #   - Set tracking.top_y     = roi.ymin                     (normalized 0–1)
+        #   - Set tracking.bounding_area = (roi.xmax - roi.xmin) * (roi.ymax - roi.ymin)
+        #   - Set tracking.confidence = tracklet.srcImgDetections[0].confidence
+        #                               if tracklet.srcImgDetections else 0.0
+        #   - Set tracking.track_id  = tracklet.id
+        #   Append each Tracking to a list, then publish as TrackingArray.
+        #
+        # Hint: roi = tracklet.roi.denormalize(1.0, 1.0) gives you xmin/xmax/ymin/ymax
+        #        TrackingArray has a field called 'trackings' (list of Tracking)
+
+        # YOUR CODE HERE
+
+    def _update_lcd(self, frame_msg):
+        """Resize the VPU passthrough frame and push it to the LCD."""
+        import cv2
+        frame = frame_msg.getCvFrame()
+        frame_resized = cv2.resize(frame, (LCD_W, LCD_H))
+        # ST7789 expects RGB, OpenCV gives BGR
+        frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+        self.lcd.display(frame_rgb)
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = YoloDetectorNode()
+    node = OakDetectionPublisher()
+
+    try:
+        while rclpy.ok():
+            node.poll()
+            rclpy.spin_once(node, timeout_sec=0.0)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
+```
+
+Run it on the robot to test before wiring up the movement node:
+
+```bash
+export ROS_DOMAIN_ID=42
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+python3 ~/oak_detection_publisher.py
+```
+
+On your PC, confirm detections are coming through:
+
+```bash
+export ROS_DOMAIN_ID=42
+ros2 topic echo /tracking_array
+```
+
+**Task 2:** Paste a sample `/tracking_array` message showing at least one person detection. What does `bounding_area` tell you about how far away the person is?
+
+---
+
+## LCD Display
+
+### Step 4 — Confirm the Screen Is Updating
+
+With `oak_detection_publisher.py` running, stand in front of the robot and move around. The LCD should show a live annotated frame with a bounding box around you.
+
+!!! warning "Don't run `display_interface` at the same time"
+    The `display_interface` ROS node and `oak_detection_publisher.py` both own the ST7789 hardware directly. Running both at the same time will cause them to conflict and neither will display correctly. The oak publisher owns the display when it's running.
+
+**Task 3:** Take a photo of the robot's LCD showing a live detection bounding box. This is your proof the VPU pipeline and display are both working end-to-end.
+
+---
+
+## Building the Movement Node
+
+### Step 5 — Write the Movement Node
+
+This node runs on your **PC**, not the robot. It subscribes to `/tracking_array` and publishes `/cmd_vel` to make the robot turn toward and follow a detected person.
+
+The control logic:
+- `center_x` tells you where the person is horizontally in the frame (0 = left, 1 = right, 0.5 = centered).
+- `bounding_area` tells you roughly how close the person is — a bigger box means closer.
+- Use a simple proportional controller: error = `center_x - 0.5`, then `angular.z = -Kp * error`.
+- Stop moving forward if `bounding_area` exceeds a threshold (person is close enough).
+
+Create the file on your PC:
+
+```bash
+touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/movement_node.py
+```
+
+```python
+#!/usr/bin/env python3
+"""
+movement_node.py
+
+Subscribes to /tracking_array (person detections from the OAK-D Lite).
+Publishes /cmd_vel to make the robot turn toward and follow the nearest person.
+
+Run on the PC, not the robot.
+"""
+
+import rclpy
+from rclpy.node import Node
+from geometry_msgs.msg import Twist
+from mini_pupper_interfaces.msg import TrackingArray
+
+# Tuning parameters — adjust these to change tracking behavior
+Kp_YAW        = 1.0    # proportional gain for yaw correction
+FORWARD_SPEED = 0.12   # m/s — how fast to walk toward the person
+CLOSE_AREA    = 0.5    # stop walking forward when bounding_area exceeds this
+YAW_DEADBAND  = 0.05   # ignore yaw error smaller than this (avoids jitter)
+
+
+class MovementNode(Node):
+
+    def __init__(self):
+        super().__init__('movement_node')
+
+        # Task: Create a subscriber to '/tracking_array' using TrackingArray
+        # messages. Callback should be self.tracking_callback. Queue size 10.
+        self.subscription = # YOUR CODE HERE
+
+        # Task: Create a publisher for Twist messages on '/cmd_vel'.
+        # Queue size 10.
+        self.publisher = # YOUR CODE HERE
+
+        self.get_logger().info('MovementNode started — waiting for detections')
+
+    def tracking_callback(self, msg: TrackingArray):
+
+        # Task: If there are no trackings in msg.trackings, publish a
+        # zero Twist to stop the robot and return early.
+        # YOUR CODE HERE
+
+        # Pick the largest detection (closest person) to follow.
+        # Task: Find the Tracking in msg.trackings with the highest
+        # bounding_area and store it as `target`.
+        target = # YOUR CODE HERE
+
+        cmd = Twist()
+
+        # Task: Compute the yaw error.
+        # center_x is 0 (full left) to 1 (full right). Error is 0 when centered.
+        # If the absolute error is smaller than YAW_DEADBAND, set angular.z to 0.
+        # Otherwise set angular.z = -Kp_YAW * error  (negative because turning
+        # left when person is to the right requires negative angular.z).
+        # YOUR CODE HERE
+
+        # Task: Set forward speed.
+        # If target.bounding_area < CLOSE_AREA, set cmd.linear.x = FORWARD_SPEED.
+        # Otherwise the person is close enough — set cmd.linear.x = 0.0.
+        # YOUR CODE HERE
+
+        # Task: Publish the Twist command.
+        # YOUR CODE HERE
+
+        self.get_logger().info(
+            f'target center_x={target.center_x:.2f}  '
+            f'area={target.bounding_area:.3f}  '
+            f'lin={cmd.linear.x:.2f}  ang={cmd.angular.z:.2f}'
+        )
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = MovementNode()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
@@ -160,74 +389,104 @@ if __name__ == '__main__':
     main()
 ```
 
-Register the node in `setup.py`:
+Register in `setup.py`:
 
 ```
-'yolo_detector = mini_pupper_labs.yolo_detector:main',
+'movement_node = mini_pupper_labs.movement_node:main',
 ```
 
-### Step 4 — Build, Run, and View
+Build:
 
 ```bash
 cd ~/ros2_ws
 colcon build --packages-select mini_pupper_labs --symlink-install
 source install/setup.bash
-ros2 run mini_pupper_labs yolo_detector
 ```
 
-View the annotated feed:
+### Step 6 — Run the Full Pipeline
 
+Open three terminals:
+
+**Terminal 1 — robot bringup (SSH):**
 ```bash
-ros2 run rqt_image_view rqt_image_view
+export ROS_DOMAIN_ID=42
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+ros2 launch mini_pupper_bringup bringup.launch.py
 ```
 
-Select `/yolo/image_annotated` from the topic dropdown, and point the camera at a few different objects.
+**Terminal 2 — OAK-D publisher (SSH):**
+```bash
+export ROS_DOMAIN_ID=42
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+python3 ~/oak_detection_publisher.py
+```
 
-**Task 2:** Screenshot a successful detection with at least one correctly labeled bounding box. What's the approximate frame rate you're seeing (watch `ros2 topic hz /yolo/image_annotated`), and does it feel noticeably slower than the raw `/camera/image_raw` rate from Step 1?
+**Terminal 3 — movement node (PC):**
+```bash
+export ROS_DOMAIN_ID=42
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+ros2 run mini_pupper_labs movement_node
+```
+
+Stand in front of the robot and walk left and right slowly. It should turn to keep you centered. Walk further away and it should walk toward you. Walk close enough and it should stop.
+
+!!! warning "Keep one hand near the power switch"
+    The robot will try to move as soon as it sees a person. Have it on a flat surface with some space around it, and be ready to kill bringup (Ctrl+C in Terminal 1) if it starts moving unexpectedly.
+
+**Task 4:** Describe the tracking behavior — does it turn to follow you smoothly, overshoot, or oscillate? If it's hunting back and forth, `Kp_YAW` is too high. If it barely responds, it's too low. Try at least two different `Kp_YAW` values and report what you observed.
 
 ---
 
-## Investigating On-Device Inference
+## Tuning
 
-### Step 5 — Compare Against the OAK-D Lite's Onboard VPU
+### Step 7 — Tune the Controller
 
-`depthai_ros_driver` (the same package from Week 1) supports configuring an onboard neural network pipeline that runs directly on the camera's VPU instead of streaming raw frames for a host node to process. The exact parameter names for enabling this have changed across `depthai_ros_driver` versions, so check the package's own README/parameter docs for your installed version rather than assuming a specific flag — this is the same "verify against the actual installed version" habit from Week 6 and Week 7's launch-file investigations.
+The three main parameters to experiment with:
 
-Once you've got it running, compare the two approaches directly:
+| Parameter | Effect | Start here if... |
+|---|---|---|
+| `Kp_YAW` | How aggressively it turns to center the target | Oscillates → lower it. Sluggish → raise it. |
+| `FORWARD_SPEED` | How fast it walks toward the person | Too fast/unstable → lower it |
+| `CLOSE_AREA` | How close is "close enough" to stop walking | Stops too far away → lower it. Bumps into you → raise it. |
 
-**Task 3:** With your Step 3 node running, check CPU usage on whichever machine is running it (`top` or `htop`). Then try the on-device pipeline from `depthai_ros_driver` and check CPU usage again, on both the camera-side (nothing to check directly, it's on the VPU) and host side. What's the practical difference, and what did you have to give up (if anything) to get it — model flexibility, ease of setup, accuracy?
+**Task 5:** Find a set of values where the robot tracks you smoothly across at least a 2-meter range. Report your final `Kp_YAW`, `FORWARD_SPEED`, and `CLOSE_AREA` values and describe the behavior at those settings.
 
 ---
 
 ## Looking Ahead
 
-Week 10's capstone pulls together navigation (Weeks 7–8) and vision (this week) into one system. Right now your detector only logs/visualizes — it doesn't feed a decision-making process. The natural next step is publishing structured detection data (class, confidence, bounding box) using `vision_msgs/Detection2DArray`, the standard ROS2 message type for object detector output, so a future state machine node can subscribe to it without caring which detector produced it.
+Right now the tracker follows whoever it sees first. If two people are in frame, `bounding_area` picks the larger (closer) one, but there's no concept of "lock on to this specific person and ignore others." The `track_id` field in `Tracking` is exactly what you'd use to fix that — once you've identified the person you want to follow, ignore all tracklets whose `track_id` doesn't match.
 
-**DELIVERABLE:** Look up the `vision_msgs/Detection2D` and `vision_msgs/Detection2DArray` message definitions (`ros2 interface show vision_msgs/msg/Detection2DArray`). Sketch out (in your writeup, not in code) how you'd restructure this week's detection loop to populate one of these messages per detected object, instead of just drawing on the image.
+**DELIVERABLE:** In your writeup, describe how you'd modify `tracking_callback` to lock onto the first person seen and only follow that `track_id` for the rest of the session. You don't have to implement it — just describe the logic clearly enough that you could.
 
 ---
 
 ## Tasks
 
-1. Standalone YOLOv8 test result and detected objects/confidences (Step 2).
-2. Annotated detection screenshot and frame rate comparison (Step 4).
-3. On-device vs. host-side CPU usage comparison and tradeoff discussion (Step 5).
-4. `vision_msgs/Detection2DArray` restructuring sketch (Looking Ahead).
+1. DepthAI version and `lsusb` output confirming camera is recognized (Step 1).
+2. Sample `/tracking_array` message with at least one person detection, and explanation of `bounding_area` (Step 3).
+3. Photo of the robot LCD showing a live detection bounding box (Step 4).
+4. Tracking behavior description with at least two `Kp_YAW` values compared (Step 6).
+5. Final tuned parameter values and behavior description (Step 7).
+6. `track_id` lock-on logic description (Looking Ahead).
 
 ---
 
 ## Troubleshooting
 
-??? question "`ultralytics` install is extremely slow or fails on the robot"
-    This is expected if you tried installing it on the CM4 directly — PyTorch's ARM wheels are large and can be painfully slow on this hardware. Run the detector node on your PC instead, as described in the Background section.
+??? question "`lsusb` doesn't show `03e7` at all"
+    The udev rule is probably missing or not applied yet. Check `/etc/udev/rules.d/80-movidius.rules` — it should contain `SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"`. If it's missing, add it and run `sudo udevadm control --reload-rules && sudo udevadm trigger`, then unplug and replug the camera.
 
-??? question "`/camera/image_raw` shows up in `topic list` but `topic hz` shows nothing"
-    Same discovery-vs-transport issue from previous weeks — check your DDS/CycloneDDS configuration before assuming the camera has a problem.
+??? question "Pipeline builds but `tracklets_queue.tryGet()` always returns None"
+    This usually means the model didn't download on first run — the robot needs internet access for the initial download. Run `python3 ~/oak_detection_publisher.py` once while connected to WiFi and wait for the download to complete before running offline. You can confirm the model cached by checking `~/.cache/` for Luxonis model files.
 
-??? question "YOLO runs but never detects anything"
-    Confirm `cv_image` actually has real image data — try `cv2.imwrite('debug.jpg', cv_image)` right after the conversion and check the saved file looks like a real camera frame, not a garbled or black image. A bad `desired_encoding` argument to `imgmsg_to_cv2` is a common cause of this.
+??? question "LCD shows nothing or freezes"
+    Make sure `display_interface` isn't also running — check `ros2 node list` for a display node. If it's there, kill it before starting the oak publisher.
 
-??? question "`/yolo/image_annotated` topic exists but `rqt_image_view` shows nothing"
-    Confirm the publisher's `encoding` in `cv2_to_imgmsg` matches what you actually have in `cv_image` (`bgr8` for a standard color OpenCV image). A mismatch here usually shows as a blank or corrupted-looking display rather than an error.
+??? question "`/tracking_array` is publishing but movement_node isn't moving the robot"
+    Confirm `ROS_DOMAIN_ID=42` is set in every terminal including the PC one. Run `ros2 topic echo /cmd_vel` to check if the movement node is actually publishing — if you see Twist messages there but the robot isn't moving, bringup on the robot may have died.
+
+??? question "Robot spins continuously even with nobody in front of it"
+    The tracker is probably picking up a false detection. Check `ros2 topic echo /tracking_array` — if detections keep coming with no person present, try raising the confidence threshold in `oak_detection_publisher.py` by filtering out tracklets where `srcImgDetections[0].confidence < 0.5`.
 
 ---

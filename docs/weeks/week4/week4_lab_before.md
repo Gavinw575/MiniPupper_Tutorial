@@ -30,7 +30,7 @@ Picture one leg simplified to two rigid links connected by two joints. A hip and
 
 Here is a short [video](https://www.youtube.com/shorts/wCPYtaVuW2w) giving an explanation of the difference. Although it is animation related in the video I still think it was a great explanation.
 
-The Stanford Quadruped controller solves IK continuously, many times a second, for all four legs, every time you send a `/cmd_vel` command. Now we get to do that by hand.
+CHAMP solves IK continuously, many times a second, for all four legs, every time you send a `/cmd_vel` command. Now we get to do that by hand.
 
 We're using real measurements from the Mini Pupper 2's URDF, front-right leg:
 
@@ -209,7 +209,7 @@ ros2 run tf2_ros tf2_echo rf1 rffoot
  
 ## Looking Ahead: Classical vs. Learned Control
  
-This week's IK is the classical approach to legged locomotion. It's exactly what the Stanford Quadruped controller does under the hood — every time it moves a leg, it's calling this same kind of math to convert a target foot position into joint angles. Week 5 takes a fundamentally different path: a reinforcement-learned policy that never derives an equation at all — it learns, through trial and lots of simulated trial-and-error, what joint angles tend to produce good walking.
+This week's IK is the classical approach to legged locomotion. It's exactly what CHAMP does. Week 5 takes a fundamentally different path: a reinforcement-learned policy that never derives an equation at all — it learns, through trial and lots of simulated trial-and-error, what joint angles tend to produce good walking.
  
 **DELIVERABLE:** Answer the following.
  

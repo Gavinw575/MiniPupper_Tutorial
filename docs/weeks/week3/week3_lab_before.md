@@ -5,7 +5,7 @@
 **Objectives:**
 
 1. Drive the Mini Pupper 2 with keyboard teleop and understand what `/cmd_vel` actually carries.
-2. Explain what the Stanford Quadruped controller does between receiving `/cmd_vel` and producing a walking gait.
+2. Explain what CHAMP does between receiving `/cmd_vel` and producing a walking gait.
 3. Read and interpret a TF (transform) tree — frames, parent/child relationships, and live inspection tools.
 4. Write a ROS2 node that uses TF to track the robot's position over time.
 
@@ -15,7 +15,7 @@
 
 - [teleop_twist_keyboard (ROS2 package)](https://github.com/ros2/teleop_twist_keyboard)
 - [tf2 documentation](https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Tf2-Main.html)
-- [Stanford Quadruped controller (GitHub)](https://github.com/stanfordroboticsclub/StanfordQuadruped)
+- [CHAMP quadruped controller (GitHub)](https://github.com/chvmp/champ)
 - Week 2 Lab — Nodes, Topics & cmd_vel (you'll reuse your `/cmd_vel` publisher knowledge here)
 
 ---
@@ -36,16 +36,16 @@ ros2 topic list
 
 Last week you got `/cmd_vel` working, a `geometry_msgs/Twist` message carrying linear and angular velocity. For the Mini Pupper 2, only `linear.x` (forward/back) and `angular.z` (turning) actually matter; the robot can't fly (obvioulsy), so everything else gets ignored.
 
-What we dont know yet is what happens after that message gets published. Since the Pupper doesn't have wheels we need something that can coordinate commands into a leg gait. This is where the Stanford Quadruped controller comes in. It's a Python-based gait controller running on the robot that subscribes to `/cmd_vel` and every control cycle:
+What we dont know yet is what happens after that message gets published. Since the Pupper doesn't have wheels we need somethat that can coordinate commands into a leg gait. This is where CHAMP gets used. CHAMP is a quadruped controller framwork that is running on the robot. CHAMP subscribes to `/cmd_vel` and every control cycle:  
 
 1. Picks a gait pattern (the default is a trot, diagonal leg pairs move together)
 2. Generates a foot trajectory for each leg based on the requested velocity
 3. Solves inverse kinematics to convert each foot position into joint angles
 4. Publishes those joint angles to the servo controllers
 
-You are not writing any of that yet. Your job is to understand the what goes in and what comes out, or the interface. The gait itself is configured in a single Python file — `stanford_controller/Config.py` — which sets things like swing height, step timing, and how many legs are in the air at once. We'll come back to that file in Week 4.
+You are not writing any of that yet. Your job is to understand the what goes in and what comes out, or the interface.
 
-The other concept this week is TF, ROS2's transform tree. When the Stanford controller or any other node needs to know "where is this foot relative to the body" or "where is the robot relative to the map," it doesn't recompute that chain from scratch every time. TF maintains a constantly updated tree of coordinate frames, where every frame knows its position relative to its parent. Any node can ask "where is X relative to Y, right now" without caring how many frames sit in between.
+The other concept this week is TF, ROS2's transform tree. When CHAMP or any other node needs to know "where is this foot relative to the body" or "where is the robot relative to the map," it doesn't recompute that chain from scratch every time. TF maintains a constantly updated tree of coordinate frames, where every frame knows its position relative to its parent. Any node can ask "where is X relative to Y, right now" without caring how many frames sit in between.
 
 !!! note "Frames you'll see on the Mini Pupper 2"
     - `map` — fixed world frame (only exists once SLAM is running, Week 7)

@@ -29,7 +29,7 @@ In ROS2, a node is a single process that can do multiple things like reading a s
 
 Topics have different types and every topic carries one specific message type. `/cmd_vel` always carries `geometry_msgs/Twist` messages. `/imu/data` always carries `sensor_msgs/Imu` messages. A node has to use the correct type or ROS2 won't let it connect.
 
-This architecture means nodes are completely seperate from other nondes. The teleop keyboard node has no idea the [Stanford Quadruped controller](https://github.com/stanfordroboticsclub/StanfordQuadruped) exists, all it does us publishe to `/cmd_vel`. The controller subscribes to `/cmd_vel`. They never talk directly, which makes it easy to swap one out without touching the other. This is the core idea that makes ROS2 so powerful for robotics.
+This architecture means nodes are completely seperate from other nondes. The teleop keyboard node has no idea the [CHAMP](https://github.com/chvmp/champ) controller exists, all it does us publishe to `/cmd_vel`. The controller subscribes to `/cmd_vel`. They never talk directly, which makes it easy to swap one out without touching the other. This is the core idea that makes ROS2 so powerful for robotics.
 
 ---
 
@@ -170,7 +170,7 @@ Mess around with the other button options and see what they all do.
 Press `k` to stop the robot, then `Ctrl+C` to exit teleop.
 
 !!! note
-    The Mini Pupper 2 is a quadruped, not a wheeled robot. The Stanford Quadruped controller translates these simple velocity commands into coordinated 12-servo leg movements automatically. From ROS2's perspective, controlling a quadruped looks identical to controlling a wheeled robot as they both just subscribe to `/cmd_vel`.
+    The Mini Pupper 2 is a quadruped, not a wheeled robot. The CHAMP controller translates these simple velocity commands into coordinated 12-servo leg movements automatically. From ROS2's perspective, controlling a quadruped looks identical to controlling a wheeled robot as they both just subscribe to `/cmd_vel`.
 
 ---
 
