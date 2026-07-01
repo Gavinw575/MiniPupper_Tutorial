@@ -26,11 +26,11 @@
 
 ## Background
 
-This lab ties every major piece of the course together. The robot will walk into a room it hasn't seen before, build a map, detect and locate objects in that space, respond to a spoken command, and let a person physically stop it at any time. That last part — the touch pad — is the piece you haven't touched yet.
+Now time for a cool project. We now want the robot to walk into a small room or a little setup of boxes, build a map, detect and locate objects in that space, respond to spoken commands, and use the touch sensor on the back to physically stop it at any time. 
 
 ### The full system
 
-Five ROS2 nodes run together, most of them reused or lightly adapted from earlier labs:
+Five ROS2 nodes will need to run together, some of them can be reused or changed slightly from earlier labs:
 
 | Node | Where it runs | What it does |
 |---|---|---|
@@ -42,31 +42,31 @@ Five ROS2 nodes run together, most of them reused or lightly adapted from earlie
 | `voice_node` | Robot | Records from the onboard mic, runs vosk, publishes keyword events (new) |
 | `touch_node` | Robot | Polls the ESP32's touch pad, publishes a `Bool` estop signal (new) |
 
-The state machine that connects them lives in `explorer_node`. It listens to `/object_inventory` (from `detector_node`), `/voice_command` (from `voice_node`), and `/touch_estop` (from `touch_node`), and makes three decisions: keep exploring, stop cleanly, or emergency-freeze.
+The state machine that connects them lives in `explorer_node`. It listens to `/object_inventory` (from `detector_node`), `/voice_command` (from `voice_node`), and `/touch_estop` (from `touch_node`), and makes three decisions: keep exploring, stop cleanly, or emergency stop.
 
 ### Why the voice node runs on the robot
 
-The microphone is a hardware I2S device on the robot's CM4. You can't stream raw audio over ROS2 without significant latency and bandwidth cost — it's much cleaner to run `vosk` locally on the robot where the audio device lives, and only publish small string messages over the network when a keyword is recognized. The trade-off is that `vosk`'s small model takes about 200 MB of RAM on the CM4, which is tight but workable since inference only runs between detections, not continuously.
+The microphone is a hardware I2S device on the robot's CM4. You can't stream raw audio over ROS2 without significant latency and bandwidth cost — it's much cleaner to run `vosk` locally on the robot where the audio device lives, and only publish small string messages over the network when a keyword is recognized. The trade-off is that `vosk`'s small model takes about 200 MB of RAM on the CM4.
 
 ### The touch pad
 
-The Mini Pupper 2's capacitive touch pad is connected to the ESP32, which communicates with the CM4 over USB serial. The BSP installs `screen /dev/ttyUSB0 115200` as the `esp32-cli` alias — that's the same serial port the servo commands flow through. The touch state is a separate message type in the ESP32's serial protocol. Your `touch_node` reads that serial stream, parses the touch packet, and republishes it as a standard `std_msgs/Bool` on `/touch_estop`.
+The Mini Pupper 2's capacitive touch pad is connected to the ESP32, which communicates with the CM4 over USB serial. The board support package (BSP) installs `screen /dev/ttyUSB0 115200` as the `esp32-cli` alias — that's the same serial port the servo commands flow through. The touch state is a separate message type in the ESP32's serial protocol. Your `touch_node` reads that serial stream, parses the touch packet, and republishes it as a standard `std_msgs/Bool` on `/touch_estop`.
 
 !!! warning "ttyUSB0 vs ttyUSB1"
     If bringup is already running when you test `touch_node`, the servo interface may already hold `/dev/ttyUSB0`. The touch pad may appear on `/dev/ttyUSB1` in that case. Check `ls /dev/ttyUSB*` on the robot before hardcoding the port.
 
 ### Object position pipeline
 
-The OAK-D Lite gives you a 3D position in camera frame for each detection (X forward, Y left, Z up, in meters). To log where in the *map* an object is, you need to transform that point through the TF tree:
+The OAK-D Lite gives you a 3D position in camera frame for each detection (X forward, Y left, Z up, in meters). To log where in the map an object is, you need to transform that point through the TF tree:
 
 ```
-camera_optical_frame → base_link → odom → map
+camera_optical_frame -> base_link -> odom -> map
 ```
 
 `tf2_ros` handles this — look up the transform from `camera_optical_frame` to `map` at the time of detection, and apply it to the XYZ point from the depth pipeline.
 
 !!! note "Deduplication"
-    The same chair will be detected many times as the robot walks past it. A simple rule — if an object of the same class already exists in the inventory within 0.5 m of this detection, skip it — keeps the manifest readable. You'll implement this in Step 5.
+    The same chair will be detected many times as the robot walks past it. A simple rule — if an object of the same class already exists in the inventory within 0.5 m of this detection, skip it — keeps the manifest readable. 
 
 ---
 
@@ -102,7 +102,7 @@ You should see an I2S or ALSA device listed. Note the device index — you'll ne
 On the robot, open the ESP32 serial monitor:
 
 ```bash
-esp32-cli   # alias for: screen /dev/ttyUSB0 115200
+esp32-cli
 ```
 
 Touch the capacitive pad on the back of the robot. You should see a message in the serial output when it registers contact. Note exactly what the serial packet looks like — your `touch_node` will parse this string.
@@ -115,10 +115,10 @@ Touch the capacitive pad on the back of the robot. You should see a message in t
 
 ### Step 3 — Write `voice_node.py`
 
-Create the file on the robot (this node runs on the robot, not the PC):
+Create the file on the robot:
 
 ```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/voice_node.py
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/voice_node.py
 ```
 
 ```python
@@ -130,7 +130,7 @@ Listens to the onboard I2S microphone using sounddevice, runs vosk
 offline speech recognition, and publishes recognized keyword events
 on /voice_command as std_msgs/String.
 
-Runs on the robot (CM4), not the PC.
+Runs on the robot (CM4).
 """
 
 import json
@@ -164,10 +164,12 @@ class VoiceNode(Node):
 
         # Task: Load the vosk model from ~/vosk-model.
         # Hint: Model('/home/ubuntu/vosk-model') — adjust path if needed.
+
         self.model = # Your code
 
         # Task: Create a KaldiRecognizer with the model and SAMPLE_RATE.
         # Hint: KaldiRecognizer(self.model, SAMPLE_RATE)
+
         self.recognizer = # Your code
 
         self.get_logger().info('VoiceNode ready — listening for keywords')
@@ -253,7 +255,7 @@ ros2 topic echo /voice_command
 Create the file on the robot:
 
 ```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/touch_node.py
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/touch_node.py
 ```
 
 ```python
@@ -264,7 +266,7 @@ touch_node.py
 Reads the ESP32 serial stream and publishes a True on /touch_estop
 whenever the capacitive touch pad is pressed.
 
-Runs on the robot (CM4).
+Runs on the robot.
 """
 
 import serial
@@ -286,6 +288,7 @@ class TouchNode(Node):
 
         # Task: Open a serial.Serial connection to SERIAL_PORT at BAUD_RATE.
         # Set timeout=0.1 so readline() doesn't block the node permanently.
+
         self.ser = # Your code
 
         self.create_timer(0.05, self._poll_serial)
@@ -335,7 +338,7 @@ Register in `setup.py`:
 This node runs on the PC. It builds on the Week 9 YOLO detector but adds depth-to-map-frame transformation and inventory tracking.
 
 ```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/detector_node.py
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/detector_node.py
 ```
 
 ```python
@@ -348,9 +351,9 @@ runs YOLOv8 on each frame, estimates 3D position of each detection in the
 map frame via TF, and maintains a deduplicated object inventory.
 
 Publishes:
-  /yolo/image_annotated  — sensor_msgs/Image (annotated feed for rqt)
-  /object_inventory      — std_msgs/String   (JSON manifest, updated live)
-  /inventory_update      — std_msgs/String   (single-object event on new find)
+  /yolo/image_annotated — sensor_msgs/Image (annotated feed for rqt)
+  /object_inventory — std_msgs/String (JSON manifest, updated live)
+  /inventory_update — std_msgs/String (single-object event on new find)
 
 Runs on the PC.
 """
@@ -545,7 +548,7 @@ Register in `setup.py`:
 This is the state machine. It runs on the PC and owns the top-level behavior.
 
 ```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/explorer_node.py
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/explorer_node.py
 ```
 
 ```python
@@ -554,16 +557,16 @@ touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/explorer_node.py
 explorer_node.py
 
 State machine that drives the capstone demo:
-  IDLE     — waiting for the run to start
-  EXPLORE  — sends frontier goals to Nav2, watching for voice/touch events
+  IDLE - waiting for the run to start
+  EXPLORE — sends frontier goals to Nav2, watching for voice/touch events
   TRACKING — (optional extension) switches to person-following mode
-  STOPPED  — final state: cancels Nav2, plays a chirp, prints the manifest
+  STOPPED — final state: cancels Nav2, plays a chirp, prints the manifest
 
 State transitions:
-  IDLE     → EXPLORE   on startup (or a configurable delay)
-  EXPLORE  → STOPPED   on /voice_command containing a keyword
-  EXPLORE  → STOPPED   on /touch_estop True
-  EXPLORE  → EXPLORE   on Nav2 goal completion (pick next frontier)
+  IDLE - EXPLORE on startup (or a configurable delay)
+  EXPLORE - STOPPED on /voice_command containing a keyword
+  EXPLORE - STOPPED on /touch_estop True
+  EXPLORE - EXPLORE on Nav2 goal completion (pick next frontier)
 
 Runs on the PC.
 """
@@ -761,7 +764,7 @@ class ExplorerNode(Node):
         #
         # Document your approach in your writeup.
 
-        # Your code (or implementation note)
+        # Your code
 
 
 def main(args=None):
@@ -790,50 +793,44 @@ Register in `setup.py`:
 
 Start everything in order. Use separate terminals.
 
-**Terminal 1 — Robot bringup (on robot or via SSH):**
+**Terminal 1 — Robot bringup (on robot via SSH):**
 
 ```bash
-export ROBOT_MODEL=mini_pupper_2
-export ROS_DOMAIN_ID=42
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
 ros2 launch mini_pupper_bringup bringup.launch.py
 ```
 
 **Terminal 2 — SLAM (on PC):**
 
 ```bash
-export ROS_DOMAIN_ID=42
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
 ros2 launch mini_pupper_slam slam.launch.py
 ```
 
 **Terminal 3 — Nav2 (on PC):**
 
 ```bash
-export ROS_DOMAIN_ID=42
-ros2 launch mini_pupper_navigation navigation_smacplanner.launch.py map:=$HOME/map.yaml
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+ros2 launch mini_pupper_navigation navigation_smacplanner.launch.py
 ```
-
-!!! note "Blank map vs. live mapping"
-    If you have a pre-built map from Week 7, you can run Nav2 with it for localization. If you want the robot to build the map from scratch during the demo, skip Nav2's map argument and let SLAM build one live — Nav2 will localize against the growing map. The second approach is more impressive but requires SLAM and Nav2 to run simultaneously, which is the standard configuration.
 
 **Terminal 4 — Voice and touch nodes (on robot via SSH):**
 
 ```bash
-export ROS_DOMAIN_ID=42
-ros2 run mini_pupper_labs voice_node &
-ros2 run mini_pupper_labs touch_node
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+ros2 run mini_pupper_labs voice_node & ros2 run mini_pupper_labs touch_node
 ```
 
 **Terminal 5 — Detector and explorer (on PC):**
 
 ```bash
-export ROS_DOMAIN_ID=42
-ros2 run mini_pupper_labs detector_node &
-ros2 run mini_pupper_labs explorer_node
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+ros2 run mini_pupper_labs detector_node & ros2 run mini_pupper_labs explorer_node
 ```
 
-**Task 6:** Run the full system. Let the robot explore for at least 60 seconds and detect at least 3 distinct objects. Then say "stop" to trigger the voice command. Screenshot the inventory manifest printed in the explorer node's log output.
+**Task 6:** Run the full system. Let the robot explore the room and detect at least 3 distinct objects (you can place them). Then say "stop" to trigger the voice command. Screenshot the inventory manifest printed in the explorer node's log output.
 
-**Task 7:** Trigger the touch estop mid-run (during active navigation). Confirm the robot halts within 1 second of the touch event. Screenshot the `/touch_estop` topic and the explorer node log showing the transition to STOPPED.
+**Task 7:** Trigger the touch estop mid-run (during active navigation). Confirm the robot halts after the touch event. Screenshot the `/touch_estop` topic and the explorer node log showing the transition to STOPPED.
 
 ---
 
@@ -846,8 +843,6 @@ A few natural extensions if you want to keep pushing:
 - **RL locomotion:** Swap the Stanford gait controller for the trained neural policy from the MJX Colab. The object inventory and exploration logic is completely independent of the locomotion layer — you'd only change how `cmd_vel` gets executed below the navigation stack.
 - **LCD live inventory:** Push the current object count and last-detected class to the ST7789 display so the robot's screen acts as a live status panel during the sweep.
 - **Speaker feedback on each new find:** Add a short bark or chirp (via `sounddevice` on the robot) every time `detector_node` publishes a new `/inventory_update` event, so you can hear the robot "finding" things without watching a terminal.
-
-**DELIVERABLE:** Full demo video (phone camera is fine) showing: robot exploring autonomously, at least 3 objects detected and logged, voice stop command received, manifest printed, touch estop demonstrated.
 
 ---
 
