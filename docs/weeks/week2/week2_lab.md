@@ -98,18 +98,6 @@ source ~/ros2_ws/install/setup.bash
 
 Verify the robot is live by checking this topic is publishing:
 
-If using a VM ensure your Network Adaptor is set to a "Bridged Adaptor" this makes it so your IP matches the host machines IP. After, restart daemon
-```bash
-ros2 daemon stop && ros2 daemon start
-```
-You will also need to use CycloneDDS if using a VM so run this on both the SSH terminal and the VM terminal.
-c
-```bash
-sudo apt install -y ros-humble-rmw-cyclonedds-cpp
-echo "export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp" >> ~/.bashrc
-source ~/.bashrc
-```
-
 ```bash
 ros2 topic hz /joint_states
 ```
@@ -233,14 +221,9 @@ ls mini_pupper_labs/
 You should see:
 
 ```
-mini_pupper_labs/
-├── mini_pupper_labs/
-│   └── __init__.py
-├── package.xml
-├── resource/
-│   └── mini_pupper_labs
-├── setup.cfg
-└── setup.py
+creating folder./mini_pupper_labs
+creating ./mini_pupper_labs/package.xml
+... cont.
 ```
 
 package.xml declares the package name, version, and dependencies. Open it and take a look:
@@ -279,10 +262,10 @@ You'll do this for each node you write. Leave it empty for now youll come back t
 Create a new file for your first node:
 
 ```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/move_robot.py
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/move_robot.py
 ```
 
-Open it in your editor and copy in the following starter code. The `# TODO` comments mark the lines you need to fill in:
+Open it in your editor and copy in the following starter code. The `# Task` comments mark the lines you need to fill in:
 
 ```python
 #!/usr/bin/env python3
@@ -303,10 +286,10 @@ class MoveRobotNode(Node):
     def __init__(self):
         super().__init__('move_robot')
 
-        # TODO: Create a publisher that publishes Twist messages to '/cmd_vel'
+        # Task: Create a publisher that publishes Twist messages to '/cmd_vel'
         # with a queue size of 10.
         # Hint: self.create_publisher(MessageType, 'topic_name', queue_size)
-        self.publisher = # YOUR CODE HERE
+        self.publisher = # Your code
 
         # This timer calls self.timer_callback every 0.1 seconds (10 Hz)
         self.timer = self.create_timer(0.1, self.timer_callback)
@@ -322,9 +305,9 @@ class MoveRobotNode(Node):
         self.phase_time += 0.1
 
         if self.phase == 'forward':
-            # TODO: Set the forward speed to 0.12 m/s
+            # Task: Set the forward speed to 0.12 m/s
             # Hint: which field of msg.linear controls forward movement?
-            msg.linear.x = # YOUR CODE HERE
+            msg.linear.x = # Your code
             msg.angular.z = 0.0
 
             if self.phase_time >= 2.0:   # drive forward for 2 seconds
@@ -333,7 +316,7 @@ class MoveRobotNode(Node):
 
         elif self.phase == 'turn':
             msg.linear.x = 0.0
-            # TODO: Set the rotation speed to 0.5 rad/s (turns left)
+            # Task: Set the rotation speed to 0.5 rad/s (turns left)
             # Hint: which field of msg.angular controls rotation?
             msg.angular.z = # YOUR CODE HERE
 
@@ -341,8 +324,8 @@ class MoveRobotNode(Node):
                 self.phase = 'forward'
                 self.phase_time = 0.0
 
-        # TODO: Publish the message using self.publisher
-        # YOUR CODE HERE
+        # Task: Publish the message using self.publisher
+        # Your code
 
 
 def main(args=None):
@@ -364,7 +347,7 @@ if __name__ == '__main__':
     main()
 ```
 
-Once you've filled in the TODOs, register the node in `setup.py`. Open `~/ros2_ws/src/mini_pupper_labs/setup.py` and update the `entry_points` section:
+Once you've filled in the tasks, register the node in `setup.py`. Open `~/ros2_ws/src/mini_pupper_labs/setup.py` and update the `entry_points` section:
 
 ```python
 entry_points={

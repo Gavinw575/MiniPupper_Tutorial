@@ -88,6 +88,13 @@ sudo curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
 sudo apt update
 ```
 
+Set your ROS Domain ID
+
+```bash
+echo 'export ROS_DOMAIN_ID=42' >> ~/.bashrc
+source ~/.bashrc
+```
+
 ---
 
 ### 2.0 — Board Support Package (BSP) Install
@@ -97,8 +104,6 @@ The BSP installs the low-level services the robot needs to function, including t
 SSH into the robot and run:
 
 ```bash
-cd ~
-git clone https://github.com/mangdangroboticsclub/mini_pupper_bsp.git
 cd mini_pupper_bsp
 ```
 
@@ -108,6 +113,7 @@ Run the install:
 ./install.sh
 sudo reboot
 ```
+
 ---
 
 ### 2.1 — First Robot Bringup 
@@ -152,18 +158,17 @@ SSH into the robot and confirm the OS sees it:
 lsusb | grep -i movidius
 ```
 
-You should see something like `03e7:2485` (unbooted) or `03e7:f63b` (booted). If nothing shows up, try a different USB port or cable before going further.
+You should see something like `03e7:2485` (unbooted) or `03e7:f63b` (booted). If nothing shows up, try a different cable before going further.
 
 DepthAI devices need udev rules to be accessible without root:
 
 ```bash
-sudo wget -O /etc/udev/rules.d/80-movidius.rules https://raw.githubusercontent.com/luxonis/depthai/main/depthai-core/cmake/depthai/data/udev/80-movidius.rules
+echo 'SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"' | sudo tee /etc/udev/rules.d/80-movidius.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
 sudo usermod -aG plugdev $USER
-sudo reboot
 ```
 
-After rebooting and logging back in, install the DepthAI Python library and test it standalone, before touching ROS2 — this way you know whether any problem is the camera/SDK or the ROS2 layer:
+Install the DepthAI Python library.
 
 ```bash
 python3 -m pip install --upgrade pip
@@ -180,8 +185,22 @@ sudo apt update
 sudo apt install ros-humble-depthai-ros
 ```
 
+SSH into the robot and launch the full bringup:
+
+```bash
+source /opt/ros/humble/setup.bash
+source ~/ros2_ws/install/setup.bash 
+ros2 launch mini_pupper_bringup bringup.launch.py
+```
+
 !!! note
-    If that package isn't available in the apt index, building `depthai-ros` from source is the fallback — ask your instructor if `apt install` fails.
+    If you run bringup and it comes with any errors such as "[servo_interface-6] [Errno 2] No such file or directory" please run: 
+    ```bash
+    cd ~/mini_pupper_bsp/esp32_proxy
+    sudo ./install.sh
+    sudo systemctl restart esp32-proxy
+    sudo systemctl status esp32-proxy
+    ```
 
 Launch the camera node:
 
@@ -197,12 +216,14 @@ ros2 topic list | grep camera
 ros2 topic hz /camera/image_raw
 ```
 
-View the live feed to confirm the image itself looks correct, not just that the topic is publishing:
+View the live feed to confirm the image itself looks correct. It may just be a single frame but as long as you get an image that is fine. 
 
 ```bash
 # Run on your PC
-ros2 run rqt_image_view rqt_image_view
+ros2 run image_view image_view --ros-args --remap image:=/oak/rgb/image_raw
 ```
+
+Task: Take screenshot of the preview from the camera
 
 Select `/camera/image_raw` from the topic dropdown and confirm you see a live image.
 
