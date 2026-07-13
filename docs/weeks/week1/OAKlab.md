@@ -24,21 +24,26 @@
 
 ## Background
 
-The Mini Pupper 2 is an open-source quadruped robot. It runs Ubuntu 22.04 and ROS2 Humble, making it a great platform for learning robotics. For this Lab we will be using a LD06 lidar scanner which operates on a 2D. 
-![MiniPupper](images/IMG_1768.webp)  
+The Mini Pupper 2 is an open-source quadruped robot. It runs Ubuntu 22.04 and ROS2 Humble, making it a great platform for learning robotics.
+
+![MiniPupper](images/MiniPup.webp){width=450}
+  
 **Key hardware specs:**
 
 | Component | Details |
 |-----------|---------|
 | Computer | Raspberry Pi Compute Module 4 (CM4) |
-| OS | Ubuntu 22.04 LTS (aarch64) |
+| OS | Ubuntu 22.04 (aarch64) |
 | Servos | 12x serial smart servos (3 per leg) with position feedback |
 | IMU | Built-in 6-axis inertial measurement unit |
-| Lidar | LD06 — 360° laser scanner, 12m range |
+| Lidar | STL-06P — 360° laser scanner, 12m range, ~4,500 samples a sec |
 | Camera | OAK-D Lite (USB3, DepthAI) |
 | Extra MCU | ESP32 for low-level hardware control |
 
-The Mini Pupper v2 differs from v1 in several important ways. Instead of using a Raspberry Pi 4B it uses a Computer Module 4 or CM4 instead, letting us have a smaller footprint while still using the same processor. This version also has a built-in IMU and ESP32 to allow for more programability and fun projects.
+The Mini Pupper v2 differs from v1 in several important ways. Instead of using a Raspberry Pi 4B it uses a Computer Module 4 or CM4 instead, letting us have a smaller footprint while still using the same processor.
+![CM4](images/CM4.png){width=450}
+
+This version also has a built-in IMU and ESP32-S3 to allow for more programability and fun projects.
 
 ---
 
@@ -71,7 +76,7 @@ After successfully logging in you can now edit the network configuration file.
 sudo nano /etc/netplan/50-cloud-init.yaml
 ```
 Edit "MangDang" to your WI-FI SSD and change the password to your wifi password 
-![netplan](images/Netplanedit.png)
+![netplan](images/Netplanedit.png){width=700}
 
  connect the robot to your WiFi network. Find the robot's IP address (shown on screen of pupper) and SSH in from your PC:
 
@@ -94,7 +99,7 @@ Set your ROS Domain ID
 echo 'export ROS_DOMAIN_ID=42' >> ~/.bashrc
 source ~/.bashrc
 ```
-
+**Task 1:** Take a picture of the robot showing its IP address on the screen. 
 ---
 
 ### 2.0 — Board Support Package (BSP) Install
@@ -123,13 +128,13 @@ SSH into the robot and view the ROS2 topics list.
 ```bash
 ros2 topic list
 ```
-Take note of these topics to compare with the next list. 
+Take note of these topics or keep that terminal open to compare with the next list.
 
-SSH into the robot and launch the full bringup:
+SSH into the robot and launch the full robot bringup:
 
 ```bash
 source /opt/ros/humble/setup.bash
-source ~/ros2_ws/install/setup.bash #tells your terminal where to find the ROS2 packages
+source ~/ros2_ws/install/setup.bash
 ros2 launch mini_pupper_bringup bringup.launch.py
 ```
 
@@ -144,11 +149,15 @@ source ~/ros2_ws/install/setup.bash
 ros2 topic list
 ```
 
-You will see multiple new topics added to the list. 
+You will see multiple new topics added to the list.
+
+**Task 2:** Compare and list the different topics that are listed before and after bringup was launched. What do you think these new topics are doing?
 
 ---
 
 ### 3.1 — OAK-D Lite Camera Setup & Verification
+
+![OAK](images/OAK.jpg){width=350}
 
 Plug the OAK-D Lite into one of the CM4's USB ports using the USB-C to USB-A (or USB-C to USB-C) cable that came with it. It's USB3-capable but works fine on USB2 too, just at lower bandwidth.
 
@@ -223,23 +232,22 @@ View the live feed to confirm the image itself looks correct. It may just be a s
 ros2 run image_view image_view --ros-args --remap image:=/oak/rgb/image_raw
 ```
 
-Task: Take screenshot of the preview from the camera
-
 Select `/camera/image_raw` from the topic dropdown and confirm you see a live image.
 
 !!! warning
     If you're checking topics from your PC rather than directly on the robot, remember that `topic list` confirming a topic exists is discovery only — it doesn't guarantee you're actually receiving frame data. Make sure your DDS configuration is set up the way you've got it working for your other topics.
 
+**Task 3:** Submit a screenshot of `rqt_image_view` showing a live feed from the OAK-D Lite on `/camera/image_raw`.
+
 ---
 
 ### Tasks
-1. Flash SD card and take picture of the robot's screen showing a successful boot prompt of "IP: no IPv4 address".
 
-2. Take picture of the robot's screen showing a successful boot prompt the new IP shown on the screen
+1. Take picture of the robot's screen showing a successful boot prompt the new IP shown on the screen
 
-3. Bringup launches without errors, make note and list the different topics listed after bringup is running vs before it was ran, screenshot provided.
+2. Compare and list the different topics that are listed before and after bringup was launched. What do you think these new topics are doing?
 
-4. Submit a screenshot of `rqt_image_view` showing a live feed from the OAK-D Lite on `/camera/image_raw`.
+3. Submit a screenshot of `rqt_image_view` showing a live feed from the OAK-D Lite on `/camera/image_raw`.
 
 
 
@@ -251,22 +259,10 @@ Select `/camera/image_raw` from the topic dropdown and confirm you see a live im
     source /opt/ros/humble/setup.bash
     source ~/ros2_ws/install/setup.bash
     ```
-??? question "apt update shows GPG signature errors"
-    Re-run the GPG key fix from Task 2.
-
 ??? question "lsusb doesn't show the Movidius device"
     Try a different USB port or cable — loose USB-C connections are the most common culprit. If you just plugged it in, give it a few seconds and re-run `lsusb`.
-
-??? question "depthai import works but camera.launch.py shows no /camera topics"
-    Confirm the udev rules were actually applied and that you rebooted (or fully re-logged in) after `usermod -aG plugdev`. Group membership changes don't take effect in an already-open session.
-
-??? question "Lidar not showing in topic list"
-    Verify the lidar is connected to the correct serial port:
-    ```bash
-    ls /dev/ttyAMA*
-    ```
 ??? question "Robot appears unlevel" 
-    If you notice the robot does not appear level or "calibrated" please exit bringup by using ctrl+c and then run 
+    If you notice the robot does not appear level or calibrated please exit bringup by using ctrl+c and then run 
     ```bash
     calibrate
     ```

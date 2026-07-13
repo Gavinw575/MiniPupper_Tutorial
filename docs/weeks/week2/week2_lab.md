@@ -29,7 +29,7 @@ In ROS2, a node is a single process that can do multiple things like reading a s
 
 Topics have different types and every topic carries one specific message type. `/cmd_vel` always carries `geometry_msgs/Twist` messages. `/imu/data` always carries `sensor_msgs/Imu` messages. A node has to use the correct type or ROS2 won't let it connect.
 
-This architecture means nodes are completely seperate from other nondes. The teleop keyboard node has no idea the [Stanford Quadruped controller](https://github.com/stanfordroboticsclub/StanfordQuadruped) exists, all it does us publishe to `/cmd_vel`. The controller subscribes to `/cmd_vel`. They never talk directly, which makes it easy to swap one out without touching the other. This is the core idea that makes ROS2 so powerful for robotics.
+This architecture means nodes are completely seperate from other nodes. The teleop keyboard node has no idea the [Stanford Quadruped controller](https://github.com/stanfordroboticsclub/StanfordQuadruped) exists, all it does us publishe to `/cmd_vel`. The controller subscribes to `/cmd_vel`. They never talk directly, which makes it easy to swap one out without touching the other. This is the core idea that makes ROS2 so powerful for robotics.
 
 ---
 
@@ -102,14 +102,14 @@ Verify the robot is live by checking this topic is publishing:
 ros2 topic hz /joint_states
 ```
 
-Should show a steady publish rate. If it shows nothing, bringup is not fully running.
+Should show a steady publish rate. If it shows nothing, bringup is not fully running and teleop will not work.
 
 ---
 
 ### 1.2 — Driving with Teleop
 
 
-Let's drive the robot manually to see how `/cmd_vel` works in practice.
+Now drive the robot manually to see how `/cmd_vel` works.
 
 Open a second terminal on the PC, run:
 
@@ -151,14 +151,16 @@ angular:
   z: 0.0
 ```
 
-`linear.x` controls forward/backward speed in metres per second. `angular.z` controls rotation in radians per second. All other fields are zero as the robot cannot fly.
+`linear.x` controls forward/backward speed in metres per second. `angular.z` controls rotation in radians per second. All other fields are zero as the robot cannot fly (obviously).
 
 Mess around with the other button options and see what they all do. 
 
 Press `k` to stop the robot, then `Ctrl+C` to exit teleop.
 
 !!! note
-    The Mini Pupper 2 is a quadruped, not a wheeled robot. The Stanford Quadruped controller translates these simple velocity commands into coordinated 12-servo leg movements automatically. From ROS2's perspective, controlling a quadruped looks identical to controlling a wheeled robot as they both just subscribe to `/cmd_vel`.
+    The Stanford Quadruped controller translates these simple velocity commands into coordinated 12-servo leg movements automatically. From ROS2's perspective, controlling a quadruped looks identical to controlling a wheeled robot as they both just subscribe to `/cmd_vel`.
+
+**Task 1:** Screenshot of `ros2 topic echo /cmd_vel` showing live Twist messages while driving with teleop. As well as a video of the robot walking using teleop.
 
 ---
 
@@ -176,7 +178,7 @@ You'll see a long list of nodes — the lidar driver, the controller, the IMU, a
 ros2 node info /mini_pupper_hardware
 ```
 
-This shows you every topic the node publishes to and subscribes from, and what message types it uses. This is one of the most useful debugging tools in ROS2. If something isn't working, `ros2 node info` tells you what a node is expecting to receive and what it's sending out.
+This shows you every topic the node publishes to and subscribes from, and what message types it uses. This can be a very helpful tool for ROS2. For example, if osmething is not working you can look at the node info and it will tell you what the node is expecting to receive and what it is sending out.
 
 To look at a topic directly:
 
@@ -201,11 +203,13 @@ ros2 interface show geometry_msgs/msg/Twist
 
 Keep this in mind as you'll need to know the field names when you write your publisher node.
 
+**Task 2:** Take a screenshot of `ros2 topic info /cmd_vel` while running teleop and with teleop closed.
+
 ---
 
 ### 2.1 — Creating a ROS2 Package
 
-Now you'll create the Python package that your nodes will live in. On your PC (not the robot):
+Now create the Python package that your nodes will live in. On your PC:
 
 ```bash
 cd ~/ros2_ws/src
@@ -238,7 +242,7 @@ setup.py is how Python knows what executables to build. Every node you write nee
 cat mini_pupper_labs/setup.py
 ```
 
-Find the `entry_points` section - it looks like this:
+Find the `entry_points` section. It looks like this:
 
 ```python
 entry_points={
@@ -247,13 +251,13 @@ entry_points={
 },
 ```
 
-This is where you'll register your nodes. Every time you write a new node file, you add a line here in the format:
+This is where you'll add and register the nodes. Every time you write a new node file, you add a line here in the format:
 
 ```
 'node_name = package_name.file_name:main',
 ```
 
-You'll do this for each node you write. Leave it empty for now youll come back to it.
+You'll do this for each node you write. You can leave it empty for now and come back to it later.
 
 ---
 
@@ -318,7 +322,8 @@ class MoveRobotNode(Node):
             msg.linear.x = 0.0
             # Task: Set the rotation speed to 0.5 rad/s (turns left)
             # Hint: which field of msg.angular controls rotation?
-            msg.angular.z = # YOUR CODE HERE
+            
+            # Your code
 
             if self.phase_time >= 3.14:  # rotate ~180 degrees then go again
                 self.phase = 'forward'
@@ -356,8 +361,7 @@ entry_points={
     ],
 },
 ```
-
-Build and run:
+Place the robot on the floor and build and run:
 
 ```bash
 cd ~/ros2_ws
@@ -371,6 +375,8 @@ The robot should drive forward for 2 seconds, rotate, and repeat. Press `Ctrl+C`
 !!! note
     Make sure bringup is still running on the robot in your first terminal before running this. The node publishes to `/cmd_vel` over the network — the robot receives it automatically as long as both machines are on the same network with `ROS_DOMAIN_ID` matching.
 
+**Task 3:** Show your completed `move_robot.py` and a video of the robot moving using the node you just made
+
 ---
 
 ### 2.3 — Writing a Subscriber Node (IMU data)
@@ -380,7 +386,7 @@ Now you'll write a subscriber that listens to the robot's IMU and prints the ori
 Create a new file:
 
 ```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/read_imu.py
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/read_imu.py
 ```
 
 Open it and copy in the starter code:
@@ -397,21 +403,20 @@ the robot's linear acceleration and angular velocity to the terminal.
 import rclpy
 from rclpy.node import Node
 
-# TODO: Import the correct message type for IMU data
+# Task: Import the correct message type for IMU data
 # Hint: it comes from the sensor_msgs package
-# YOUR IMPORT HERE
-
+# Your import here 
 
 class ReadImuNode(Node):
 
     def __init__(self):
         super().__init__('read_imu')
 
-        # TODO: Create a subscription to '/imu/data'
+        # Task: Create a subscription to '/imu/data'
         # The callback function should be self.imu_callback
         # Queue size of 10
         # Hint: self.create_subscription(MessageType, 'topic_name', callback, queue_size)
-        self.subscription = # YOUR CODE HERE
+        self.subscription = # Your code
 
         self.get_logger().info('ReadImuNode started — listening to /imu/data')
 
@@ -422,15 +427,13 @@ class ReadImuNode(Node):
         accel = msg.linear_acceleration
         gyro  = msg.angular_velocity
 
-        # TODO: Print the linear acceleration values for x, y, and z
+        # Task: Print the linear acceleration values for x, y, and z
         # Format it nicely so it's easy to read in the terminal
         # Hint: use self.get_logger().info() and an f-string
-        # YOUR CODE HERE
+        # Your code
 
         # This is done for you as an example — compare the format
-        self.get_logger().info(
-            f'Gyro    — x: {gyro.x:6.3f}  y: {gyro.y:6.3f}  z: {gyro.z:6.3f}'
-        )
+        self.get_logger().info(f'Gyro — x: {gyro.x:6.3f} y: {gyro.y:6.3f} z: {gyro.z:6.3f}')
 
 
 def main(args=None):
@@ -471,14 +474,16 @@ ros2 run mini_pupper_labs read_imu
 
 You should see acceleration and gyroscope values streaming in your terminal. Try picking the robot up and tilting it — watch how the values change. Try running your `move_robot` node at the same time in a second terminal and observe how the IMU values change as the robot walks.
 
+**Task 4:** Submit your completed `read_imu` code. Video of the code running showing changing in the IMU
+
 ---
 
-### 2.4 — Challenge: Read Joint States
+### 2.4 — Read Joint States
 
-As an extension, write a third node called `read_joints.py` that subscribes to `/joint_states` and prints the position of each of the 12 servos. 
+Write a third node called `read_joints.py` that subscribes to `/joint_states` and prints the position of each of the 12 servos. 
 
 ```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/read_joints.py
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/read_joints.py
 ```
 
 You'll need to look up the `sensor_msgs/JointState` message type to know what fields are available:
@@ -493,22 +498,20 @@ The `name` field is a list of joint names and the `position` field is a matching
 [INFO] fl_leg1_joint:  0.123  fl_leg2_joint: -0.456  ...
 ```
 
-This is an open-ended exercise — there's no starter code. Use what you've learned from the previous two nodes.
+**Task 5:** Submit your completed `read_joints` code and a screenshot of it running
 
 ---
 
 ### Tasks
 
-1. Screenshot of `ros2 topic echo /cmd_vel` showing live Twist messages while driving with teleop.
+1. Screenshot of `ros2 topic echo /cmd_vel` showing live Twist messages while driving with teleop. As well as a video of the robot walking using teleop.
 
-2. Screenshot of `ros2 topic info /cmd_vel` and `ros2 node info` for one node of your choice.
+2. Take a screenshot of `ros2 topic info /cmd_vel` while running teleop and with teleop closed.
 
-3. Screenshot of your completed `move_robot.py` with the TODOs filled in, and a short description of what each field you set does.
+3. Show your completed `move_robot.py` and a video of the robot moving using the node you just made
 
-4. Video or screenshot of the robot moving as a result of your `move_robot` node running.
+4. Submit your completed `read_imu` code. Video of the code running showing changing in the IMU
 
-5. Screenshot of your completed `read_imu.py` with the IMU data streaming in the terminal. Describe what happens to the acceleration values when you pick the robot up.
-
-6. **Challenge:** Submit your completed `read_joints.py` and a screenshot of it running.
+5. Submit your completed `read_joints` code and a screenshot of it running.
 
 ---

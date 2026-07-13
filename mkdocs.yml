@@ -1,10 +1,10 @@
 site_name: Mini Pupper ROS2 Robotics Course
-site_description: A 10-week hands-on ROS2 robotics course built around the Mini Pupper 2 quadruped robot
+site_description: A collection of labs built around the Mini Pupper 2 robot
 site_author: Gavin
 site_url: https://minipupper-tutorial.readthedocs.io/
 
-repo_name: your-username/mini-pupper-ros2-course
-repo_url: https://github.com/your-username/mini-pupper-ros2-course
+repo_name: MiniPupper_Tutorial
+repo_url: https://github.com/Gavinw575/MiniPupper_Tutorial
 edit_uri: edit/main/docs/
 
 theme:
@@ -26,8 +26,8 @@ theme:
     text: Roboto
     code: Roboto Mono
   features:
+   # - navigation.tabs.sticky
     - navigation.tabs
-    - navigation.tabs.sticky
     - navigation.sections
     - navigation.expand
     - navigation.top
@@ -67,15 +67,6 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Setup:
-      - Overview: setup/overview.md
-      - Hardware Assembly: setup/hardware.md
-      - SSH & WiFi: setup/ssh_wifi.md
-      - Ubuntu 22.04 on CM4: setup/ubuntu.md
-      - ROS2 Humble Install: setup/ros2_install.md
-      - Mini Pupper Bringup: setup/bringup.md
-      - Verification Checklist: setup/verification.md
-      - Troubleshooting: setup/troubleshooting.md
   - Course:
       - Lab 1 - SSH & OAK D Lite setup: weeks/week1/OAKlab.md
       - Lab 2 — Nodes, Topics & cmd_vel: weeks/week2/week2_lab.md
@@ -87,18 +78,9 @@ nav:
       - Lab 8 — Nav2, AMCL, Costmaps & Waypoint Following: weeks/week8/week8_lab.md
       - Lab 9 — IMX500, libcamera & YOLOv8 Inference: weeks/week9/week9_lab.md
       - Lab 10 — Autonomous Mapping + YOLO Object Detection: weeks/week10/week10_lab.md
-
-  - Reference:
-      - ROS2 Topics: reference/topics.md
-      - TF Tree: reference/tf_tree.md
-      - Cartographer Config: reference/cartographer.md
-      - Nav2 Config: reference/nav2.md
-      - Leg Geometry & Kinematics: reference/kinematics.md
-      - Hardware Pinout: reference/pinout.md
-
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/your-username
+      link: https://github.com/Gavinw575/MiniPupper_Tutorial
 
 copyright: Copyright &copy; 2026 Gavin
