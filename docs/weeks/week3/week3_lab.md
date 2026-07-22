@@ -96,7 +96,7 @@ ros2 topic echo /cmd_vel
 Launch RViz2 with the config from Week 1:
 
 ```bash
-ros2 launch mini_pupper_description rviz.launch.py
+ros2 launch mini_pupper_bringup rviz.launch.py
 ```
 
 Add a TF display if it isn't already there (Add, By Display Type, TF). You'll see the frame tree as colored axes, with `base_link` in the middle and everything else branching off it. Drive the robot with teleop while watching RViz — `base_link` moves, but the relationship between `base_link` and the leg/sensor frames stays fixed, since they're rigidly attached.
@@ -120,7 +120,7 @@ ros2 run tf2_ros tf2_echo odom base_link
 
 This prints the translation and rotation of `base_link` relative to `odom`, updating continuously.
 
-**Task 2:** Sketch (or describe) the parent-child relationship for three frames of your choosing from the `view_frames` diagram. Then drive forward a short distance while watching `tf2_echo odom base_link`, and describe what changes.
+**Task 2:** Describe the parent-child relationship for three frames of your choosing from the `view_frames` diagram. Then drive forward a short distance while watching `tf2_echo odom base_link`, and describe what changes. Include the file that generated as well as a screen shot of `tf2_echo`
 
 ---
 
@@ -170,7 +170,7 @@ class PositionTrackerNode(Node):
 
         # Task: Create a timer that calls self.timer_callback every 0.5 seconds.
         # Hint: self.create_timer(period_in_seconds, callback_function)
-        self.timer = # YOUR CODE HERE
+        self.timer = # Your code
 
         self.get_logger().info('PositionTrackerNode started!')
 
@@ -179,7 +179,7 @@ class PositionTrackerNode(Node):
             # Task: Look up the transform from 'odom' to 'base_link'.
             # Hint: self.tf_buffer.lookup_transform(target_frame, source_frame, time)
             # Pass rclpy.time.Time() as the time argument to mean "latest available"
-            transform = # YOUR CODE HERE
+            transform = # Your code
 
         except (LookupException, ConnectivityException, ExtrapolationException) as e:
             self.get_logger().warn(f'Could not get transform: {e}')
@@ -198,7 +198,7 @@ class PositionTrackerNode(Node):
         # position using x, y, self.start_x, and self.start_y.
         # Hint: standard distance formula — sqrt of the sum of squared
         # differences.
-        distance = # YOUR CODE HERE
+        distance = # Your code
 
         self.get_logger().info(
             f'Position: ({x:.3f}, {y:.3f})  |  Distance from start: {distance:.3f} m'
@@ -240,11 +240,11 @@ With the node running, drive the robot with teleop in another terminal and watch
 
 ---
 
-## Looking Ahead: Why Odometry Isn't Enough
+## Why Odometry Isn't Enough
 
 Drive the robot in a square — forward, turn 90°, repeat four times — trying to land back exactly where you started. Watch your `position_tracker` node's reported distance-from-start as you do it.
 
-**Task 5:** Compare the `position_tracker` node's reported distance-from-start at the end to your best estimate of where you *actually* ended up (eyeball it against a tape measure or floor tile on the real robot, or compare to a ground-truth pose topic in simulation).
+**Task 5:** Compare the `position_tracker` node's reported distance from start at the end to your best estimate of where you ended up.
 
 ---
 
@@ -254,22 +254,7 @@ Drive the robot in a square — forward, turn 90°, repeat four times — trying
 2. TF tree sketch (three frames) and `tf2_echo` observation while driving (Step 4).
 3. Drift-at-rest observation and explanation (Step 5).
 4. Explanation of why `lookup_transform` can fail on startup (Step 5).
-5. Square-drive odometry drift comparison (Looking Ahead).
+5. Square-drive odometry drift comparison.
 
 ---
 
-## Troubleshooting
-
-??? question "`teleop_twist_keyboard` command not found"
-    Confirm the install completed: `sudo apt install ros-humble-teleop-twist-keyboard`. If you're in a sourced workspace, make sure you haven't shadowed the system package — check `ros2 pkg list | grep teleop`.
-
-??? question "RViz shows no TF frames at all"
-    Confirm bringup is actually running and `robot_state_publisher` is active: `ros2 node list | grep robot_state_publisher`. No `robot_state_publisher` means no `/tf_static` for the rigid frames.
-
-??? question "`position_tracker` immediately throws `LookupException` and never recovers"
-    Check that `/tf` and `/tf_static` are both actually publishing: `ros2 topic hz /tf`. If nothing's there, bringup likely isn't fully up yet — restart it and wait a few seconds before launching the node.
-
-??? question "Distance from start jumps to a huge, nonsensical number"
-    This usually means the transform briefly returned a stale or extrapolated value. Confirm you're passing `rclpy.time.Time()` (latest available) rather than a fixed past timestamp to `lookup_transform`.
-
----

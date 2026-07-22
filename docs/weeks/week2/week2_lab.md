@@ -275,60 +275,80 @@ Open it in your editor and copy in the following starter code. The `# Task` comm
 #!/usr/bin/env python3
 """
 move_robot.py
-
 A publisher node that sends velocity commands to the Mini Pupper 2.
 Publishes to /cmd_vel at a fixed rate to make the robot move in a square.
+Uses the IMU to correct heading drift while driving forward.
 """
-
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
+from sensor_msgs.msg import Imu
 
 
 class MoveRobotNode(Node):
-
     def __init__(self):
         super().__init__('move_robot')
-
         # Task: Create a publisher that publishes Twist messages to '/cmd_vel'
         # with a queue size of 10.
         # Hint: self.create_publisher(MessageType, 'topic_name', queue_size)
         self.publisher = # Your code
 
+        # Task: Create a subscriber to '/imu/data' that calls self.imu_callback
+        # with a queue size of 10.
+        # Hint: self.create_subscription(MessageType, 'topic_name', callback, queue_size)
+        self.imu_sub = # Your code
+
         # This timer calls self.timer_callback every 0.1 seconds (10 Hz)
         self.timer = self.create_timer(0.1, self.timer_callback)
-
         # Track how long we've been in the current movement phase
         self.phase_time = 0.0
         self.phase = 'forward'
 
+        # Heading tracking (the IMU orientation field is not valid on this
+        # robot, so we integrate the raw gyro z-axis rate ourselves)
+        self.yaw = 0.0
+        self.last_imu_time = None
+        self.Kp = 1.2             # correction gain, feel free to tune
+        self.max_correction = 0.3  # rad/s cap on correction
+
         self.get_logger().info('MoveRobotNode started!')
+
+    def imu_callback(self, msg):
+        now = self.get_clock().now()
+        if self.last_imu_time is not None:
+            # Task: compute dt (in seconds) between this reading and the last
+            # Hint: (now - self.last_imu_time).nanoseconds / 1e9
+            dt = # Your code
+            # Task: integrate angular_velocity.z into self.yaw
+            self.yaw += # Your code
+        self.last_imu_time = now
 
     def timer_callback(self):
         msg = Twist()
         self.phase_time += 0.1
-
         if self.phase == 'forward':
-            # Task: Set the forward speed to 0.12 m/s
+            # Task: Set the forward speed
             # Hint: which field of msg.linear controls forward movement?
             msg.linear.x = # Your code
-            msg.angular.z = 0.0
 
-            if self.phase_time >= 2.0:   # drive forward for 2 seconds
+            # Task: Compute a correction term that steers back toward yaw = 0
+            # Hint: correction = -Kp * yaw, then clip it to [-max_correction, max_correction]
+            correction = # Your code
+            msg.angular.z = correction
+
+            if self.phase_time >= ##:   # set drive forward time in seconds
                 self.phase = 'turn'
                 self.phase_time = 0.0
-
         elif self.phase == 'turn':
             msg.linear.x = 0.0
-            # Task: Set the rotation speed to 0.5 rad/s (turns left)
+            # Task: Set the rotation speed to turn left
             # Hint: which field of msg.angular controls rotation?
-            
             # Your code
-
-            if self.phase_time >= 3.14:  # rotate ~180 degrees then go again
+            if self.phase_time >= ##:  # set drive turning time in seconds
                 self.phase = 'forward'
                 self.phase_time = 0.0
-
+                # Task: reset self.yaw so the next forward leg starts fresh
+                # Your code
         # Task: Publish the message using self.publisher
         # Your code
 
@@ -370,12 +390,12 @@ source install/setup.bash
 ros2 run mini_pupper_labs move_robot
 ```
 
-The robot should drive forward for 2 seconds, rotate, and repeat. Press `Ctrl+C` to stop — it will send a zero velocity command before exiting.
+The robot should drive forward, rotate, and repeat. Press `Ctrl+C` to stop — it will send a zero velocity command before exiting.
 
 !!! note
     Make sure bringup is still running on the robot in your first terminal before running this. The node publishes to `/cmd_vel` over the network — the robot receives it automatically as long as both machines are on the same network with `ROS_DOMAIN_ID` matching.
 
-**Task 3:** Show your completed `move_robot.py` and a video of the robot moving using the node you just made
+**Task 3:** Show your completed `move_robot.py` and a video of the robot moving in a square using the node you just made
 
 ---
 
@@ -400,40 +420,63 @@ A subscriber node that listens to /imu/data and prints
 the robot's linear acceleration and angular velocity to the terminal.
 """
 
+#!/usr/bin/env python3
+"""
+read_imu.py
+
+A subscriber node that listens to /imu/data and prints
+the robot's linear acceleration and angular velocity to the terminal.
+"""
+
 import rclpy
 from rclpy.node import Node
+from sensor_msgs.msg import Imu
 
-# Task: Import the correct message type for IMU data
-# Hint: it comes from the sensor_msgs package
-# Your import here 
 
 class ReadImuNode(Node):
 
     def __init__(self):
         super().__init__('read_imu')
 
-        # Task: Create a subscription to '/imu/data'
-        # The callback function should be self.imu_callback
-        # Queue size of 10
+        # Task: Create a subscription to '/imu/data' of type Imu,
+        # with callback self.imu_callback and queue size of 10.
         # Hint: self.create_subscription(MessageType, 'topic_name', callback, queue_size)
         self.subscription = # Your code
+
+        # Smoothed values, updated on every message but only printed
+        # occasionally (see timer below)
+        self.smoothed_accel = [0.0, 0.0, 0.0]
+        self.smoothed_gyro = [0.0, 0.0, 0.0]
+        self.alpha = 0.2  # smoothing factor: lower = smoother/slower to react
+
+        # Task: Create a timer that calls self.print_callback every 0.5 seconds.
+        # Hint: self.create_timer(period_seconds, callback)
+        self.print_timer = # Your code
 
         self.get_logger().info('ReadImuNode started — listening to /imu/data')
 
     def imu_callback(self, msg):
-        # The IMU message contains linear_acceleration and angular_velocity
-        # Each has x, y, z fields
-
         accel = msg.linear_acceleration
-        gyro  = msg.angular_velocity
+        gyro = msg.angular_velocity
 
-        # Task: Print the linear acceleration values for x, y, and z
-        # Format it nicely so it's easy to read in the terminal
-        # Hint: use self.get_logger().info() and an f-string
-        # Your code
+        raw_accel = [accel.x, accel.y, accel.z]
+        raw_gyro = [gyro.x, gyro.y, gyro.z]
 
-        # This is done for you as an example — compare the format
-        self.get_logger().info(f'Gyro — x: {gyro.x:6.3f} y: {gyro.y:6.3f} z: {gyro.z:6.3f}')
+        for i in range(3):
+            # TODO: Apply exponential smoothing to each axis.
+            # Formula: new_smoothed = alpha * raw + (1 - alpha) * old_smoothed
+            self.smoothed_accel[i] = # Your code
+            self.smoothed_gyro[i] = # Your code
+
+    def print_callback(self):
+        a = self.smoothed_accel
+        g = self.smoothed_gyro
+        self.get_logger().info(
+            f'Accel   — x: {a[0]:6.3f}  y: {a[1]:6.3f}  z: {a[2]:6.3f}'
+        )
+        self.get_logger().info(
+            f'Gyro    — x: {g[0]:6.3f}  y: {g[1]:6.3f}  z: {g[2]:6.3f}'
+        )
 
 
 def main(args=None):

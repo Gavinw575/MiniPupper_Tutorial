@@ -72,14 +72,14 @@ print(f'x={x}, z={z}')
 
 ```
  
-Run it with the real standing pose — `hip=0.994`, `knee=-1.767`, `l1=0.0502`, `l2=0.056`. Defining the function isn't enough on its own — Python won't run anything inside it until something actually calls it, so add a call and a print at the bottom of your script:
- 
-**Task 1:** What `(x, z)` does this give you? Does that look like a leg bent at the knee, supporting weight underneath the robot's body? Why or why not?
+Run it with the real standing pose — `hip=0.994`, `knee=-1.767`, `l1=0.0502`, `l2=0.056`. 
+
+**Task 1:** What `(x, z)` does this give you? Does that look like a leg bent at the knee? Why or why not?
  
 
 ```python
 import matplotlib
-matplotlib.use('Agg')  # headless-safe, no display needed even over SSH
+matplotlib.use('Agg')  
 import matplotlib.pyplot as plt
  
 def plot_leg(foot, knee=None, filename='leg_plot.png'):
@@ -88,7 +88,7 @@ def plot_leg(foot, knee=None, filename='leg_plot.png'):
         xs.append(knee[0]); zs.append(knee[1]); labels.append('knee')
     xs.append(foot[0]); zs.append(foot[1]); labels.append('foot')
  
-    reach = (l1 + l2) * 1.2  # a bit more than max leg reach, so nothing gets clipped
+    reach = (l1 + l2) * 1.2 
  
     plt.figure(figsize=(5, 5))
     plt.plot(xs, zs, 'o-', linewidth=2, markersize=10)
@@ -102,14 +102,12 @@ def plot_leg(foot, knee=None, filename='leg_plot.png'):
     plt.grid(True)
     plt.savefig(filename)
     print(f'Saved {filename}')
-```
- 
-```python
+
 x, z = forward_kinematics(hip, knee, l1, l2)
 plot_leg((x, z), filename='step1.png')
 ```
  
-Pull the saved image up and look at where the dot lands relative to the hip at the origin.
+Pull the saved image up and look at where the knee and foot lands relative to the hip at the origin. As you can see it looks as though the leg is stepping out sideways. Now we can fix that.
  
 ### Step 2 — Derive the Corrected Formula
  
@@ -164,7 +162,7 @@ Now solve the harder direction: given a target foot position, find the joint ang
  
 **Task 5:** Write `inverse_kinematics(target_x, target_z, l1, l2)`, returning `(hip, knee)`. The law of cosines step is the same as any 2-link IK derivation, but the final hip angle needs the same rotated reference frame from Step 2 applied in reverse.
  
-Before trusting your IK, add a real reachability check: the target's distance from the hip must be ≤ `l1 + l2`, or there's no solution.
+Before trusting your IK, add a reachability check: the target's distance from the hip must be ≤ `l1 + l2`, or there's no solution.
  
 ### Step 4 — Round-Trip Test
  
@@ -205,16 +203,6 @@ ros2 run tf2_ros tf2_echo rf1 rffoot
 ```
  
 **Task 7:** How close is your FK script's computed foot position to what TF actually reports? 
----
- 
-## Looking Ahead: Classical vs. Learned Control
- 
-This week's IK is the classical approach to legged locomotion. It's exactly what the Stanford Quadruped controller does under the hood — every time it moves a leg, it's calling this same kind of math to convert a target foot position into joint angles. Week 5 takes a fundamentally different path: a reinforcement-learned policy that never derives an equation at all — it learns, through trial and lots of simulated trial-and-error, what joint angles tend to produce good walking.
- 
-**DELIVERABLE:** Answer the following.
- 
-1. Your hand-derived IK gives an exact, guaranteed-correct answer for a reachable target (when one exists). What could a learned policy give up by not deriving exact equations, and what does it gain in return?
-
 ---
  
 ## Tasks

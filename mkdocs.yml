@@ -75,7 +75,7 @@ nav:
       - Lab 5 — Reinforcement Learning: weeks/week5/week5_lab.md
       - Lab 6 — LD19 Driver, LaserScan & Obstacle Detection: weeks/week6/week6_lab.md
       - Lab 7 — Cartographer, Occupancy Grid & Map Save/Load: weeks/week7/week7_lab.md
-      - Lab 8 — Nav2, AMCL, Costmaps & Waypoint Following: weeks/week8/week8_lab.md
+      - Lab 8 — Natural Language Voice Control with an LLM: weeks/week8/week8_lab.md
       - Lab 9 — IMX500, libcamera & YOLOv8 Inference: weeks/week9/week9_lab.md
       - Lab 10 — Autonomous Mapping + YOLO Object Detection: weeks/week10/week10_lab.md
 extra:

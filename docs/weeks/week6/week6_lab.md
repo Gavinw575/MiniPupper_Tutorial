@@ -17,13 +17,11 @@
 - [ldlidar_stl_ros2 driver (GitHub)](https://github.com/ldrobotSensorTeam/ldlidar_stl_ros2)
 - [sensor_msgs/LaserScan message definition](https://docs.ros2.org/latest/api/sensor_msgs/msg/LaserScan.html)
 - [mini_pupper_ros (GitHub)](https://github.com/mangdangroboticsclub/mini_pupper_ros)
-- Week 3 Lab — Teleop, RViz2 & TF Tree (you'll reuse the TF skills and `teleop_twist_keyboard` from there)
-
 ---
 
 ## Background
 
-A 2D lidar like the Mini Pupper 2's works on time-of-flight (ToF): it fires a laser pulse, measures how long the reflection takes to come back, and converts that into a distance. The whole unit spins, taking a burst of these measurements at a fixed rate — for the LD19, about 4,500 distance samples per second, completing a full 360° rotation roughly 10 times per second. Divide it out and that's around 450 points per revolution, each about 0.8° apart.
+A 2D lidar like the Mini Pupper 2's works on time of flight (ToF) - it fires a laser pulse, measures how long the reflection takes to come back, and converts that into a distance. The whole unit spins, taking a burst of these measurements at a fixed rate — for the LD19, about 4,500 distance samples per second, completing a full 360° rotation roughly 10 times per second. Divide it out and that's around 450 points per revolution, each about 0.8° apart.
 
 Every full rotation gets packaged into one ROS2 message: `sensor_msgs/LaserScan`. The fields that matter most:
 
@@ -57,7 +55,7 @@ Check the actual publish rate:
 ros2 topic hz /scan
 ```
 
-**Task 1:** Paste your `ros2 topic hz /scan` output. The LD19's spec sheet says it scans at 10 Hz — how close does your measured rate come to that?
+**Task 1:** Paste your `ros2 topic hz /scan` output
 
 ---
 
@@ -71,7 +69,7 @@ Look at the message definition directly:
 ros2 interface show sensor_msgs/msg/LaserScan
 ```
 
-Then capture one real scan:
+Then capture one scan:
 
 ```bash
 ros2 topic echo /scan --once
@@ -79,7 +77,7 @@ ros2 topic echo /scan --once
 
 **Task 2:** Answer both of the following:
 
-- In your own words, explain what `angle_increment` represents and why `ranges[]` is a flat array rather than, say, a list of (angle, distance) pairs.
+- Explain what `angle_increment` represents and why `ranges[]` is a flat array rather than, say, a list of (angle, distance) pairs.
 - Using `angle_min`, `angle_max`, and `angle_increment` from your captured scan, calculate how many points you'd expect in `ranges[]`. Then count the actual length of `ranges[]` from the echoed message. Do they match?
 
 !!! note "Which index is 'front'?"
@@ -105,7 +103,7 @@ Fill in the starter code below.
 obstacle_detector.py
 
 Subscribes to /scan and reports whether an obstacle is closer than
-safety_distance, within a forward-facing field of view.
+safety_distance.
 """
 
 import math
@@ -206,17 +204,17 @@ source install/setup.bash
 ros2 run mini_pupper_labs obstacle_detector
 ```
 
-### 3.3 — Find "Front" Empirically
+### 3.3 — Finding the Front of the Lidar
 
-With the node running, place an object directly in front of the robot — close enough to be well within `range_max`, far enough that it's clearly intentional (not touching the sensor). Watch the logged `closest_distance` value.
+With the node running, place an object or use your hand, in front of the robot — close enough to be well within `range_max`, far enough that you are not touching the sensor. Watch the logged `closest_distance` value.
 
-Right now, `center_index = 0` is just a placeholder, so the node is checking around whatever `ranges[0]` happens to point at — which may or may not be the front of the robot. Move the test object around the robot (front, side, back) while watching the log, and figure out which index range actually corresponds to "directly in front."
+Right now, `center_index = 0` is just a placeholder, so the node is checking around whatever `ranges[0]` happens to point at which may or may not be the front of the robot. Move around the robot (front, side, back) while watching the log, and figure out which index range actually corresponds to "directly in front."
 
 **Task (back in the code):** Once you've identified the correct front-facing index, replace `center_index = 0` with the right value.
 
-**Task 4:** Describe how you determined which index corresponds to "front." What did you observe as you moved the test object around the robot?
+**Task 4:** Describe how you determined which index corresponds to "front." What did you observe as you moved around the robot?
 
-**Task 5:** With `center_index` corrected, place an object at roughly 20cm directly in front of the robot (inside your 30cm safety distance) and screenshot the log output showing `Obstacle detected: True`. Then move it to 50cm and screenshot `Obstacle detected: False`.
+**Task 5:** With `center_index` corrected, place the object or use your hand until you see output in the log showing `Obstacle detected: True`. Then move it further away and screenshot `Obstacle detected: False`.
 
 ---
 
@@ -245,32 +243,41 @@ self.cmd_vel_sub = self.create_subscription(
     Twist, '/cmd_vel_unsafe', self.cmd_vel_callback, 10
 )
 self.obstacle_detected = False  # updated by scan_callback
+self.last_cmd = Twist() # tracks the last commanded celocity from teleop
 
 # Task: In scan_callback, instead of just logging obstacle_detected,
 # store it on self so cmd_vel_callback can check it:
 # self.obstacle_detected = obstacle_detected
 
+# In scan_callback, right after self.obstacle_detected = obstacle_detected:
+if obstacle_detected and self.last_cmd.linear.x > 0.0:
+    self.cmd_vel_pub.publish(Twist())
+
 def cmd_vel_callback(self, msg: Twist):
-    # Task: If self.obstacle_detected is True AND the robot is trying to
+    # Task: Store msg on self.last_cmd so scan_callback can check it later —
+    # teleop_twist_keyboard typically publishes once per keypress, and the
+    # robot keeps executing that last velocity until a new command arrives.
+    #
+    # Then: If self.obstacle_detected is True AND the robot is trying to
     # move FORWARD (msg.linear.x > 0), publish a zeroed-out Twist instead
     # of passing the command through. Turning in place or backing away
     # should still be allowed even with an obstacle ahead — only forward
     # motion into the obstacle needs to be blocked.
     # Hint: you'll need to construct a new Twist() with all fields at 0
-    # for the "blocked" case, and just republish msg unchanged otherwise.
+    # for the "blocked" case, and just republish msg unchanged otherwise pass.
     
-    pass  # Your code
+    # Your code
 ```
 
 Rebuild, run the obstacle detector, and drive with teleop toward an object. The robot should refuse to move forward once it's within your safety distance, but should still let you back up or turn.
 
-**Task 6: Video of driving toward an object with teleop and show the safety stop engaging. Then show that backing away and turning still work while the obstacle is detected.
+**Task 6:** Video of driving toward an object with teleop and show the safety stop engaging while walking towards the object as well as not being able to walk forward at all when an object is infront. Then show that backing away and turning still work while the obstacle is detected.
 
 ---
 
 ### Step 5 - 360° View
 
-Your current field of view only looks at a forward-facing cone. Extend the node to scan the *entire* 360° range and report the closest obstacle anywhere around the robot, along with which general direction it's in (front/back/left/right). This is a step toward the kind of full-surroundings awareness Nav2's costmaps will use starting in Week 8.
+Your current field of view only looks at a forward-facing cone. Extend the node to scan the entire 360° range and report the closest obstacle anywhere around the robot, along with which general direction it's in (front/back/left/right).
 
 **Task 7:** Demonstrate your 360° proximity detector and describe how you determined direction (front/back/left/right) from the scan data.
 
@@ -284,25 +291,8 @@ Your current field of view only looks at a forward-facing cone. Extend the node 
 4. Description of how you empirically determined the "front" index (Step 3.3).
 5. Screenshots showing `Obstacle detected: True` at 20cm and `False` at 50cm (Step 3.3).
 6. Safety-stop demo showing forward motion blocked, but backing up/turning still allowed (Step 4).
-7. 360° proximity detection stretch goal (Step 5)
+7. 360° proximity detection (Step 5)
 
 ---
 
-## Troubleshooting
 
-??? question "`ros2 topic hz /scan` shows nothing"
-    Confirm bringup is actually running and the lidar is connected. Check `ros2 node list` for a node named `LD06` (yes, still named that even on LD19 hardware — see the Background note above).
-
-??? question "ranges[] contains `inf` values and my min() call crashes"
-    That's expected — `inf` means no valid reflection at that angle. Make sure you're filtering with `math.isfinite()` *before* taking the minimum, not after.
-
-??? question "closest_distance never changes no matter where I put the object"
-    Double check `center_index` and your FOV index math — it's easy to end up looking at the wrong slice of the array. Try printing `msg.ranges[0]`, `msg.ranges[len(msg.ranges)//4]`, etc. individually while moving an object around, to map out the array by hand before trusting your FOV slice.
-
-??? question "Forward motion isn't actually being blocked in Step 4"
-    Check that `teleop_twist_keyboard` is really publishing to `/cmd_vel_unsafe` and not `/cmd_vel` — use `ros2 topic list` to confirm both topics exist, and `ros2 topic echo /cmd_vel_unsafe` to confirm teleop's output is landing there.
-
-??? question "Robot won't move at all, even with no obstacle"
-    Check that `cmd_vel_callback` actually republishes the original `msg` unchanged in the "no obstacle" case — it's easy to accidentally fall through without publishing anything.
-
----

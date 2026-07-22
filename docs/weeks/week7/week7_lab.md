@@ -33,21 +33,16 @@
 
 ## Background
 
-You've learned to drive in a square and watch as your `position_tracker` nodes report a distacne from start that failed to return to zero. That gap that you saw was due to odometry drift as `/odom` alone has no way to correct itself because it only every integrates small errors forward in time.
-
-SLAM (Simultaneous Localization and Mapping) fixes this by bringing the lidar into the loop. As the robot moves, Cartographer matches each new lidar scan against the map it's built so far. When the robot revisits a place it's seen before, the scan match reveals exactly how far the odometry estimate has drifted and Cartographer corrects for it.
+SLAM (Simultaneous Localization and Mapping) works with Cartographer to match each new lidar scan against the map it's built so far. When the pupper revisits a place it's seen before, the scan match reveals exactly how far the odometry estimate has drifted and Cartographer corrects for it.
 
 Cartographer is split into two ROS2 nodes with different jobs:
 
 | Node | Job |
 |---|---|
-| `cartographer_node` | The actual SLAM: scan matching, loop closure, pose graph optimization. Builds an internal map representation called *submaps*. |
-| `cartographer_occupancy_grid_node` | Listens to those submaps and converts them into a `nav_msgs/OccupancyGrid` — the grid you actually see in RViz and the format the rest of the navigation stack expects. |
+| `cartographer_node` | The SLAM: scan matching, loop closure, pose graph optimization. Builds an internal map representation called submaps. |
+| `cartographer_occupancy_grid_node` | Listens to those submaps and converts them into a `nav_msgs/OccupancyGrid` — the grid you see in RViz and the format the rest of the navigation stack expects. |
 
-!!! note "Why two nodes?"
-    Cartographer's own documentation notes that generating the occupancy grid from submaps is comparatively expensive, so map updates publish on the order of seconds, not every scan. This is by design — if your map in RViz seems to "catch up" in chunks rather than updating instantly, that's expected, not a bug.
-
-Looking at `slam.lua` config, a few choices are worth understanding:
+Looking at `slam.lua` config, a few parameters are worth understanding:
 
 | Parameter | Value | Why it matters |
 |---|---|---|
@@ -55,11 +50,11 @@ Looking at `slam.lua` config, a few choices are worth understanding:
 | `tracking_frame` | `"imu_link"` | The frame Cartographer tracks the robot's pose "as" |
 | `published_frame` | `"odom"` | The frame Cartographer publishes corrections relative to |
 | `use_odometry` | `true` | Cartographer fuses your `/odom` estimate with scan matching |
-| `use_imu_data` | `false` | The IMU is *not* used for scan matching on this robot |
+| `use_imu_data` | `false` | The IMU is not used for scan matching on this robot |
 | `min_range` / `max_range` | `0.02` / `12` | Matches the LD19's actual spec range exactly (Week 6) |
 
-!!! warning "Run this on your PC, not the robot"
-    `cartographer_node` is computationally heavy — scan matching and pose graph optimization are real-time optimization problems, not lightweight callbacks. The CM4 is already busy running bringup and servo control; the whole architecture assumes `/scan`, `/odom`, `/tf`, and `/imu/data` get streamed over the network to a separate machine running Cartographer.
+!!! warning "Run this on your PC like you have been, not the robot"
+    `cartographer_node` is computationally heavy — scan matching and pose graph optimization are real-time optimization problems, not lightweight callbacks. The CM4 is already busy running bringup and servo control; the architecture assumes `/scan`, `/odom`, `/tf`, and `/imu/data` get streamed over the network to a separate machine running Cartographer.
 
 ---
 
@@ -72,24 +67,21 @@ Confirm that topics exist and are carrying data
 ```bash
 ros2 topic list
 ros2 topic hz /scan
-ros2 topic hz /odom
-ros2 topic hz /tf
-ros2 topic hz /imu/data
 ```
 
-If any of these show nothing despite `ros2 topic list` listing them, try `ros2 daemon stop && ros2 daemon start` first; if that doesn't fix it, it's likely a multicast/DDS configuration or wifi issue.
+If this brings up nothing make sure that you have brinup running on the robot.
 
-**Task 1:** Paste the `ros2 topic hz` output for all four topics above.
+**Task 1:** Paste the `ros2 topic hz /scan` output.
 
 ### Step 2 — Launch Cartographer
 
-On your PC (not the robot), with bringup running on robot:
+On your PC, with bringup running on robot:
 
 ```bash
 ros2 launch mini_pupper_slam slam.launch.py
 ```
 
-This brings up `cartographer_node`, `cartographer_occupancy_grid_node`, and RViz with a SLAM-specific config, all in one launch file.
+This brings up `cartographer_node`, `cartographer_occupancy_grid_node`, and RViz with a SLAM-specific config.
 
 ---
 
@@ -97,9 +89,9 @@ This brings up `cartographer_node`, `cartographer_occupancy_grid_node`, and RViz
 
 ### Step 3 — Drive and Watch the Map Build
 
-With Cartographer running, drive the robot around with `teleop_twist_keyboard` (Week 3) and watch RViz. Try to cover the full space you want mapped including driving back through areas you've already seen, since that's what gives Cartographer loop-closure opportunities to correct drift.
+With Cartographer running, drive the robot around with `teleop_twist_keyboard` and watch RViz. Try to cover the full space you want mapped including driving back through areas you've already seen, since that's what gives Cartographer loop-closure opportunities to correct drift.
 
-**Task 2:** Screenshot the map after about 30 seconds of driving, and again once you've covered the full space. Describe what changed between the two — not just "more area covered," but anything that looks like it got *corrected* (walls that straightened up, edges that snapped into alignment).
+**Task 2:** Screenshot the map after about 30 seconds of driving, and again once you've covered a larger area.
 
 ---
 
@@ -118,7 +110,7 @@ Look specifically at the `info` field — `resolution`, `width`, `height`, and `
 
 ### Step 5 — Verify the Launch File's Claims
 
-Look at `mini_pupper_slam/launch/slam.launch.py`. The `cartographer_occupancy_grid_node` is configured like this:
+Look at `mini_pupper_slam/launch/slam.launch.py` on your pc in the ros2_ws/src/mini_pupper_ros. The `cartographer_occupancy_grid_node` is configured like this:
 
 ```python
 parameters=[
@@ -144,17 +136,11 @@ Once you're happy with the map, save it from your PC:
 ros2 run nav2_map_server map_saver_cli -f ~/map
 ```
 
-!!! warning "If this hangs or saves an empty map"
-    `map_saver_cli` needs to subscribe to `/map` with the same QoS durability Cartographer publishes it with. If the basic command above doesn't work, add the matching QoS override explicitly:
-    ```bash
-    ros2 run nav2_map_server map_saver_cli -f ~/map --ros-args -p map_subscribe_transient_local:=true
-    ```
-
-This produces two files in your home directory: `map.pgm` (the actual image of the occupancy grid) and `map.yaml` (metadata — resolution, origin, and a pointer to the `.pgm` file).
+This produces two files in your home directory: `map.pgm` (the image of the occupancy grid) and `map.yaml` (metadata — resolution, origin, and a pointer to the `.pgm` file).
 
 **Task 5:** Open `map.yaml` in a text editor and paste its contents. Match each field to what you saw in the `/map` message's `info` field back in Step 4 — which `map.yaml` field corresponds to which `OccupancyGrid.info` field?
 
-**Task 6:** View `map.pgm` as an image (most image viewers open `.pgm` directly, or convert it: `convert map.pgm map.png`). Does the shape of the mapped space match what you actually drove through?
+**Task 6:** Add `map.pgm` as a screenshot. 
 
 ---
 
@@ -166,7 +152,7 @@ Nav2 is a pipeline. Here's the chain, in order:
 4. A **global planner** computes a path across the global costmap from the robot's current pose to the goal.
 5. A **local controller** executes that path moment-to-moment, adjusting around whatever the local costmap sees that the global plan didn't account for.
 
-This course's actual configuration (`mini_pupper_navigation/param/real_table.yaml`):
+This labs configuration (`mini_pupper_navigation/param/real_table.yaml`):
 
 | Parameter | Value | Notes |
 |---|---|---|
@@ -174,11 +160,8 @@ This course's actual configuration (`mini_pupper_navigation/param/real_table.yam
 | AMCL `min_particles` / `max_particles` | 1000 / 3000 | Particle filter size |
 | DWB `controller_frequency` | 20.0 Hz | How often the local controller re-evaluates |
 | DWB `max_vel_x` / `max_vel_theta` | 0.20 m/s / 0.50 rad/s | Configured velocity limits |
-| Costmap `footprint` | `[[-0.105,-0.055], [0.105,-0.055], [0.105,0.055], [-0.105,0.055]]` | A ~21×11cm rectangle, not a circular radius |
+| Costmap `footprint` | `[[-0.105,-0.055], [0.105,-0.055], [0.105,0.055], [-0.105,0.055]]` | A ~21×11cm rectangle |
 | Costmap `resolution` | 0.02 m | Finer than the ~0.05m map resolution from above — costmaps can resolve finer than the static map they're built on |
-
-!!! note "Why a rectangular footprint, not a circle?"
-    Many Nav2 tutorials use a single `robot_radius` value, which treats the robot as a circle for collision checking. This config uses an explicit `footprint` polygon instead — a better fit for a quadruped body that's clearly longer than it is wide.
 
 ---
 
@@ -200,7 +183,7 @@ In RViz, look for the particle cloud display (a scatter of small arrows around t
 
 If the cloud looks scattered or wrong, use the 2D Pose Estimate tool in RViz's toolbar: click it, then click-and-drag on the map at the robot's actual position and facing direction. This gives AMCL a strong initial guess to converge around.
 
-**Task 8:** Screenshot the particle cloud right after launch, and again after it's converged (driving the robot a short distance with teleop usually helps it converge faster, since new scans give AMCL more to match against).
+**Task 8:** Screenshot the particle cloud right after launch, and again after it's converged.
 
 ---
 
@@ -222,7 +205,7 @@ Place a temporary obstacle (a book, your hand) somewhere in front of the robot t
 
 Use the Nav2 Goal tool in RViz's toolbar: click it, then click-and-drag at a destination within your mapped space. Watch the global path appear (a line from robot to goal) and the robot execute it.
 
-**Task 10:** Record or screenshot a successful goal execution. Did the robot's actual path ever deviate from the originally-planned global path line? If so, describe what it was avoiding and why the local controller made that choice instead of just following the global plan exactly.
+**Task 10:** Record a successful goal execution. Did the robot's actual path ever deviate from the originally-planned global path line? If so, describe what it was avoiding and why the local controller made that choice instead of just following the global plan exactly.
 
 ---
 
@@ -341,34 +324,5 @@ ros2 run mini_pupper_labs waypoint_patrol
 9. Local costmap reacting to a temporary obstacle the global costmap doesn't show (Step 9).
 10. Successful Nav2 goal execution, with explanation of any path deviation (Step 10).
 11. Completed `waypoint_patrol.py` and a video of the route result (Step 11).
-12. Velocity scaling verification and the inflation-radius risk discussion (Step 12).
-
----
-
-## Troubleshooting
-
-??? question "`ros2 topic hz` shows nothing even though `ros2 topic list` shows the topic"
-    Classic discovery-without-transport symptom. Try `ros2 daemon stop && ros2 daemon start` first. If you're running inside a VM with bridged networking, this is very likely a multicast issue — ask your instructor about the CycloneDDS configuration fix.
-
-??? question "RViz map doesn't update no matter how far you drive"
-    Confirm `cartographer_node` actually shows as a running node (`ros2 node list`), and that `/tf` includes a path from `imu_link` to `base_link` — Cartographer's `tracking_frame` is `imu_link`, so if that transform is missing, scan matching can't run at all.
-
-??? question "`map_saver_cli` hangs and never produces output"
-    This is almost always the QoS durability mismatch described in Step 6 — add `--ros-args -p map_subscribe_transient_local:=true`.
-
-??? question "Saved map.pgm looks mostly gray with no clear walls"
-    Gray means "unknown" in an occupancy grid (as opposed to black for occupied or white for free). This usually means you didn't drive close enough to enough surfaces, not a bug — try mapping again and deliberately tracing along walls.
-
-??? question "Particle cloud never converges, robot seems 'lost'"
-    Use the 2D Pose Estimate tool to manually correct it — don't assume it will sort itself out. Make sure you're actually starting from close to the same physical position as your SLAM run above.
-
-??? question "Nav2 Goal is rejected, or the robot just doesn't move"
-    Check that the goal and the robot's current position aren't too close to inflated costmap obstacles for the footprint to fit through. Also confirm Nav2's lifecycle nodes are active: `ros2 lifecycle get /amcl` (should report `active`).
-
-??? question "`waypoint_patrol.py` hangs forever at `waitUntilNav2Active()`"
-    This script doesn't start Nav2 — it only talks to a Nav2 stack that's already running. Confirm Step 7's launch command is running in a separate terminal first.
-
-??? question "Robot drives through costmap obstacles like they're not there"
-    Confirm scan data is actually reaching the costmap, not just being published — reuse your `ros2 topic hz /scan` check from Week 6/above. A costmap with no scan data to consume can't inflate anything.
 
 ---

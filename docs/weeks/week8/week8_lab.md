@@ -1,146 +1,146 @@
-# Week 8 — IMU, Orientation Estimation & Tilt Safety
+# Lab 8 — Natural Language Voice Control with an LLM
 
 ---
 
 **Objectives:**
 
-1. Understand what the Mini Pupper 2's IMU actually publishes — and what it deliberately leaves out.
-2. Derive roll and pitch from raw accelerometer data and explain where that derivation breaks down.
-3. Implement a complementary filter that fuses gyroscope and accelerometer data into a stable orientation estimate.
-4. Publish filtered orientation as a valid `sensor_msgs/Imu` message with a real quaternion.
-5. Compare your filter against `imu_filter_madgwick` from ROS2's `imu_tools` package.
-6. Use filtered orientation to build a tilt-based safety node that cuts `/cmd_vel` if the robot tips past a threshold.
+1. Build a full-dictation voice pipeline that accepts free-form spoken commands, rather than matching a fixed keyword list.
+2. Build a small action wrapper around `/cmd_vel` that exposes named movement primitives (`move_forward`, `turn_left`, etc.).
+3. Send the transcribed command to the OpenAI API and constrain its output to a fixed action vocabulary.
+4. Parse the model's response into a sequence of actions and execute them in order, with a physical touch estop able to interrupt at any point.
 
 ---
 
 **Reference Material:**
 
-- [sensor_msgs/Imu message definition](https://docs.ros2.org/humble/api/sensor_msgs/msg/Imu.html)
-- [ROS REP-145 — Conventions for IMU Sensor Drivers](https://www.ros.org/reps/rep-0145.html)
-- [imu_tools (GitHub)](https://github.com/CCNYRoboticsLab/imu_tools)
-- [imu_filter_madgwick ROS2 documentation](https://github.com/CCNYRoboticsLab/imu_tools/tree/ros2/imu_filter_madgwick)
-- Week 2 Lab — the `read_imu` subscriber you wrote there is the starting point for this week
-- Week 7 Lab — Cartographer's `use_imu_data = false` setting is directly relevant here
+- [OpenAI API — Chat Completions](https://platform.openai.com/docs/api-reference/chat)
+- [vosk offline speech recognition](https://alphacephei.com/vosk/)
+- [geometry_msgs/Twist](https://docs.ros2.org/latest/api/geometry_msgs/msg/Twist.html)
+- Week 3 Lab — Teleop, RViz2 & TF Tree (your `linear.x`/`angular.z` values)
 
 ---
 
 ## Background
 
-### What the IMU actually publishes
+This lab replaces fixed grammar with free dictation, and adds a reasoning step in between: instead of matching keywords directly, you transcribe whatever was said, hand the full sentence to an LLM, and have the model translate it into a short sequence of actions the robot actually knows how to perform.
 
-In Week 2 you wrote a subscriber that printed raw values from `/imu/data`. Take another look at the message definition:
+### Why an LLM in the middle instead of matching phrases yourself
 
-```bash
-ros2 interface show sensor_msgs/msg/Imu
-```
+You could write a pile of `if "forward" in text` conditionals, but that has its own issues — "go ahead", "walk that way", and "move forward" all mean the same thing, and a multi-step command like "turn left then stop" needs to be split into an ordered sequence. An LLM handles that translation robustly as long as you constrain its output tightly.
 
-There are three data fields: `orientation`, `angular_velocity`, and `linear_acceleration`. The Mini Pupper 2's IMU driver publishes all three — but if you look at `imu_interface.py` in `mini_pupper_driver`, you'll find this:
+### Why this node runs on the robot
 
-```python
-msg.orientation_covariance[0] = -1
-msg.orientation.w = 1.0   # identity quaternion — not real data
-```
+The voice pipeline runs on the robot because the microphone is a hardware I2S device there — streaming raw audio off the robot would be slow and bandwidth-heavy. What's new here is that the LLM call itself also happens on the robot. 
 
-Per [REP-145](https://www.ros.org/reps/rep-0145.html), setting `orientation_covariance[0] = -1` is the standard way of saying "this orientation field is not valid — ignore it." The driver sets a hardcoded identity quaternion and flags it as unknown. That means `/imu/data` is giving you raw gyroscope rates and raw accelerometer measurements, but no computed orientation. You have to fuse those two streams yourself to get a usable attitude estimate.
+The upside of this design compared to something like a live voice-to-voice API: you're sending a short line of transcribed text per command, not a continuous audio stream.
 
-This is also exactly why `slam.lua` has `use_imu_data = false` — Cartographer could use IMU orientation to improve scan matching, but not if the orientation field is flagged as unavailable. Fixing this properly would require publishing a real fused quaternion. This is what you will be doing this lab.
+### The pipeline
 
-### Two noisy sensors, one useful estimate
-
-The gyroscope measures angular velocity (rad/s). Integrate it over time and you get an angle. The problem: any small constant offset in the gyro measurement (bias) accumulates without bound. A bias of 0.01 rad/s looks harmless, but after 60 seconds of integration it's added 0.6 rad of error. Aka the gyros drift.
-
-The accelerometer measures specific force (m/s²), which at rest is just gravity pointing down. You can compute tilt directly from which direction gravity pulls: `roll = atan2(ay, az)`, `pitch = atan2(-ax, sqrt(ay² + az²))`. No drift. But the accelerometer can't tell the difference between gravity and any other acceleration — when the robot is walking and its body is bouncing, the accelerometer is noisy.
-
-A complementary filter exploits the fact that these two failure modes are frequency-separated. Gyros are accurate at high frequency (fast motions) but drift at low frequency (over time). Accelerometers are accurate at low frequency (average gravity direction) but noisy at high frequency (vibration). The filter combines them:
-
-```
-angle = alpha × (angle + gyro_rate × dt) + (1 - alpha) × accel_angle
-```
-
-where `alpha` is close to 1. Most of the time you trust the gyro integration; every update you pull the estimate back a little toward what the accelerometer says gravity is pointing. This kills the drift without inheriting the noise.
-
-!!! note "Why not just use the Madgwick filter directly?"
-    You will, in Step 5. But implementing the simpler complementary filter first gives you the intuition for what any attitude filter is doing by deciding how much to trust each sensor at each moment. The Madgwick filter is a more sophisticated version of the same idea, just in quaternion space rather than Euler angles.
+| Node | Where it runs | What it does |
+|---|---|---|
+| `voice_transcript_node` | Robot | Records from the onboard mic, runs vosk in full-dictation mode, publishes complete sentences |
+| `llm_command_node` | Robot | Sends each transcript to the OpenAI API, parses the structured response, executes actions via `pupper_actions` |
+| `pupper_actions` | Robot (imported module, not a node) | Thin wrapper exposing `move_forward()`, `turn_left()`, etc. as `/cmd_vel` Twist publishes |
 
 ---
 
 ## Setup
 
-### Step 1 — Confirm the IMU Is Live and Inspect Its Data
+### Step 1 — Install the OpenAI package and store your API key
 
-With bringup running:
-
-```bash
-ros2 topic hz /imu/data
-```
-
-The IMU publishes at 100 Hz — confirm you're seeing close to that.
-
-Then capture one message and inspect the orientation covariance:
+On the robot:
 
 ```bash
-ros2 topic echo /imu/data --once
+pip install openai --break-system-packages
 ```
 
-**Task 1:** Paste the `orientation_covariance` array from your output. What does the first value tell you, per REP-145? Are the `linear_acceleration` and `angular_velocity` fields populated with non-zero real values?
+Store your API key as an environment variable rather than hardcoding it anywhere that could end up on GitHub:
+
+```bash
+echo 'export OPENAI_API_KEY="your-key-here"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+!!! warning "Non-interactive SSH sessions don't source `.bashrc`"
+    This is the same gotcha as `ROS_DOMAIN_ID` — if you launch `llm_command_node` via a one-line `ssh ubuntu@<robot-ip> "ros2 run ..."` command, the environment variable won't be there even though it works fine in an interactive session. Export it explicitly in the same command, e.g. `ssh ubuntu@<robot-ip> "export OPENAI_API_KEY=... && ros2 run mini_pupper_labs llm_command_node"`, or add the export directly to your startup script.
+
+**Task 1:** Confirm the key is visible with `python3 -c "import os; print(bool(os.environ.get('OPENAI_API_KEY')))"` — both in an interactive SSH session and in a non-interactive one (`ssh ubuntu@<robot-ip> "python3 -c ..."`). Note which one fails and why.
 
 ---
 
-## Understanding Raw IMU Data
+## Building the Transcript Node
 
-### Step 2 — Visualize Raw Accel and Gyro
+### Step 2 — Build a full-dictation voice node
 
-Create a script that subscribes to `/imu/data` and prints roll and pitch computed directly from the accelerometer only:
+Create the file:
 
 ```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/imu_raw_angles.py
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/voice_transcript_node.py
 ```
+
+Unlike a keyword-filtered voice node, this one should publish every completed utterance, whatever it says — there's no fixed word list to match against here.
 
 ```python
 #!/usr/bin/env python3
 """
-imu_raw_angles.py
+voice_transcript_node.py
 
-Computes roll and pitch from raw accelerometer data only (no filtering)
-and prints them so you can observe the noise.
+Streams microphone audio through vosk in full-dictation mode and
+publishes every completed utterance — no fixed keyword filtering.
+
+Runs on the robot (CM4).
 """
 
-import math
+import json
+import queue
+import sounddevice as sd
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Imu
+from std_msgs.msg import String
+from vosk import Model, KaldiRecognizer
+
+SAMPLE_RATE = 16000
+BLOCK_SIZE = 4000
+DEVICE_INDEX = None
 
 
-class ImuRawAnglesNode(Node):
+class VoiceTranscriptNode(Node):
 
     def __init__(self):
-        super().__init__('imu_raw_angles')
-        self.create_subscription(Imu, '/imu/data', self.imu_callback, 10)
-        self.get_logger().info('ImuRawAnglesNode started')
+        super().__init__('voice_transcript_node')
+        self.publisher = self.create_publisher(String, '/voice_transcript', 10)
+        self.audio_queue = queue.Queue()
 
-    def imu_callback(self, msg: Imu):
-        ax = msg.linear_acceleration.x
-        ay = msg.linear_acceleration.y
-        az = msg.linear_acceleration.z
+        self.model = Model('/home/ubuntu/vosk-model')
+        self.recognizer = KaldiRecognizer(self.model, SAMPLE_RATE)
 
-        # Task: Compute roll and pitch in degrees from raw accelerometer data.
-        # Use the standard tilt-from-gravity formulas:
-        #   roll  = atan2(ay, az)
-        #   pitch = atan2(-ax, sqrt(ay*ay + az*az))
-        # Convert to degrees with math.degrees().
+        self.get_logger().info('VoiceTranscriptNode ready — listening')
 
-        roll_deg  = # Your code
-        pitch_deg = # Your code
-
-        self.get_logger().info(
-            f'roll={roll_deg:+7.2f} deg   pitch={pitch_deg:+7.2f} deg   '
-            f'gz={math.degrees(msg.angular_velocity.z):+7.2f} deg/s'
+        self.stream = sd.RawInputStream(
+            samplerate=SAMPLE_RATE, blocksize=BLOCK_SIZE, dtype='int16',
+            channels=1, device=DEVICE_INDEX, callback=self._audio_callback,
         )
+        self.stream.start()
+        self.timer = self.create_timer(0.1, self._process_audio)
+
+    def _audio_callback(self, indata, frames, time_info, status):
+        self.audio_queue.put(bytes(indata))
+
+    def _process_audio(self):
+        while not self.audio_queue.empty():
+            data = self.audio_queue.get()
+            if self.recognizer.AcceptWaveform(data):
+                result = json.loads(self.recognizer.Result())
+                text = result.get('text', '').strip()
+                # Task: if `text` is non-empty, publish it on /voice_transcript
+                # and log it. Don't filter for specific words here — that's
+                # the LLM's job now, not this node's.
+                # Your code
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = ImuRawAnglesNode()
+    node = VoiceTranscriptNode()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
@@ -150,333 +150,178 @@ if __name__ == '__main__':
     main()
 ```
 
-Register in `setup.py`:
-
-```
-'imu_raw_angles = mini_pupper_labs.imu_raw_angles:main',
-```
-
-Build and run it, then try two things: hold the robot still and observe the noise, then (slighty shake the robot or the table to see how the vibrations could corrupt the readings.
-
-**Task 2:** With the robot standing still, what is the peak-to-peak spread (max minus min) of your roll estimate over a 10-second window? Now run teleop and drive the robot in a small circle — describe qualitatively how the accelerometer-only estimate behaves while the robot is walking vs. while it's standing still.
+**Task 2:** Register `voice_transcript_node` in `setup.py`, build, and confirm `ros2 topic echo /voice_transcript` shows full sentences (not single words) as you speak.
 
 ---
 
-## Implementing the Complementary Filter
+## Building the Action Wrapper
 
-### Step 3 — Write `imu_filter_node.py`
+### Step 3 — Write `pupper_actions.py`
 
-`imu_filter_node.py subscribes to `/imu/data`, runs your complementary filter, and republishes a new `sensor_msgs/Imu` message on `/imu/filtered` with a real orientation quaternion.
+This is the equivalent of a Karel-style API: a small set of named methods that hide the `Twist` details.
 
 ```bash
-nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/imu_filter_node.py
+touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/pupper_actions.py
 ```
 
 ```python
-#!/usr/bin/env python3
 """
-imu_filter_node.py
+pupper_actions.py
 
-Implements a complementary filter that fuses gyroscope and accelerometer
-data from /imu/data into a stable roll/pitch estimate.
-
-Publishes:
-  /imu/filtered  — sensor_msgs/Imu with a valid orientation quaternion
-  /imu/rpy       — std_msgs/Float32MultiArray with [roll, pitch, yaw] in degrees
-                   (yaw is gyro-integrated only — it drifts, and that's expected)
+Thin wrapper around /cmd_vel exposing named movement primitives.
+Not a node itself — instantiate with a reference to a running node
+so it can create its own publisher.
 """
 
-import math
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import Imu
-from std_msgs.msg import Float32MultiArray
-
-
-# Complementary filter coefficient.
-# 0.98 means: 98% gyro integration, 2% accel correction every update.
-# Higher = smoother but slower to correct drift.
-# Lower = faster correction but noisier.
-ALPHA = 0.98
-
-
-def euler_to_quaternion(roll: float, pitch: float, yaw: float):
-    """
-    Convert roll, pitch, yaw (radians) to a quaternion (x, y, z, w).
-    Uses the ZYX / aerospace convention.
-    """
-    cr = math.cos(roll  / 2)
-    sr = math.sin(roll  / 2)
-    cp = math.cos(pitch / 2)
-    sp = math.sin(pitch / 2)
-    cy = math.cos(yaw   / 2)
-    sy = math.sin(yaw   / 2)
-
-    w = cr * cp * cy + sr * sp * sy
-    x = sr * cp * cy - cr * sp * sy
-    y = cr * sp * cy + sr * cp * sy
-    z = cr * cp * sy - sr * sp * cy
-    return x, y, z, w
-
-
-class ImuFilterNode(Node):
-
-    def __init__(self):
-        super().__init__('imu_filter_node')
-
-        # Filter state — Euler angles in radians
-        self.roll  = 0.0
-        self.pitch = 0.0
-        self.yaw   = 0.0   # gyro-integrated only, will drift
-
-        self.last_stamp = None   # ROS2 timestamp of the previous message
-
-        self.sub = self.create_subscription(Imu, '/imu/data', self.imu_callback, 10)
-        self.pub_filtered = self.create_publisher(Imu, '/imu/filtered', 10)
-        self.pub_rpy = self.create_publisher(Float32MultiArray, '/imu/rpy', 10)
-
-        self.get_logger().info('ImuFilterNode started')
-
-    def imu_callback(self, msg: Imu):
-        # --- Compute dt from message timestamps ---
-        now = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
-        if self.last_stamp is None:
-            self.last_stamp = now
-            return
-        dt = now - self.last_stamp
-        self.last_stamp = now
-
-        # Guard against bad dt (e.g. first message, clock jump)
-        if dt <= 0.0 or dt > 0.5:
-            return
-
-        # --- Read raw sensor values ---
-        ax = msg.linear_acceleration.x
-        ay = msg.linear_acceleration.y
-        az = msg.linear_acceleration.z
-        gx = msg.angular_velocity.x   # rad/s
-        gy = msg.angular_velocity.y
-        gz = msg.angular_velocity.z
-
-        # Task: Compute roll and pitch from the accelerometer alone.
-        # Same formulas as Step 2.
-        accel_roll  = # Your code
-        accel_pitch = # Your code
-
-        # Task: Implement the complementary filter for roll and pitch.
-        #
-        # The filter equation is:
-        #   angle = ALPHA * (angle + gyro_rate * dt) + (1 - ALPHA) * accel_angle
-        #
-        # For roll:  gyro rate is gx,  accel estimate is accel_roll
-        # For pitch: gyro rate is gy,  accel estimate is accel_pitch
-        #
-        # Update self.roll and self.pitch using this formula.
-
-        # Your code
-
-        # Task: Update self.yaw by integrating the gyro z-rate only.
-        # There is no accelerometer correction for yaw (we have no magnetometer).
-        # Just: self.yaw += gz * dt
-
-        # Your code
-
-        # --- Convert to quaternion and publish ---
-        qx, qy, qz, qw = euler_to_quaternion(self.roll, self.pitch, self.yaw)
-
-        filtered_msg = Imu()
-        filtered_msg.header = msg.header
-        filtered_msg.orientation.x = qx
-        filtered_msg.orientation.y = qy
-        filtered_msg.orientation.z = qz
-        filtered_msg.orientation.w = qw
-        # Small non-zero diagonal covariance — orientation is now valid
-        filtered_msg.orientation_covariance[0] = 0.01
-        filtered_msg.orientation_covariance[4] = 0.01
-        filtered_msg.orientation_covariance[8] = 0.01
-        filtered_msg.angular_velocity = msg.angular_velocity
-        filtered_msg.linear_acceleration = msg.linear_acceleration
-        self.pub_filtered.publish(filtered_msg)
-
-        rpy_msg = Float32MultiArray()
-        rpy_msg.data = [
-            math.degrees(self.roll),
-            math.degrees(self.pitch),
-            math.degrees(self.yaw),
-        ]
-        self.pub_rpy.publish(rpy_msg)
-
-
-def main(args=None):
-    rclpy.init(args=args)
-    node = ImuFilterNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
-
-
-if __name__ == '__main__':
-    main()
-```
-
-Register in `setup.py`:
-
-```
-'imu_filter_node = mini_pupper_labs.imu_filter_node:main',
-```
-
-Build and run:
-
-```bash
-colcon build --packages-select mini_pupper_labs --symlink-install
-source install/setup.bash
-ros2 run mini_pupper_labs imu_filter_node &
-ros2 topic echo /imu/rpy
-```
-
-Tilt the robot slowly in roll and pitch while watching the output. Then leave it sitting still for 30 seconds and watch yaw — it will drift. That's expected and important.
-
-**Task 3:** Tilt the robot to roughly 45° in roll (pick it up and hold one side down). What does `/imu/rpy` report? Is it close to 45°? Now set `ALPHA = 0.5` and repeat — describe the difference in noise and responsiveness. Reset to `ALPHA = 0.98` before continuing.
-
----
-
-## Comparing Against Madgwick
-
-### Step 4 — Install and Run `imu_filter_madgwick`
-
-Install `imu_tools`:
-
-```bash
-sudo apt install ros-humble-imu-tools
-```
-
-`imu_filter_madgwick` is a ROS2 node that subscribes to `/imu/data` and publishes a filtered `/imu/data_out`. Run it alongside your filter node
-
-```bash
-ros2 run imu_filter_madgwick imu_filter_madgwick_node \
-  --ros-args \
-  -p use_mag:=false \
-  -p publish_tf:=false \
-  -r imu/data:=/imu/data \
-  -r imu/data_out:=/imu/madgwick_out
-```
-
-!!! note "use_mag:=false"
-    The Mini Pupper 2 has a magnetometer (compass) accessible via the ESP32 interface, but it's not currently wired into any ROS2 node. Setting `use_mag:=false` tells Madgwick to use gyro + accel only, the same inputs your complementary filter has. This makes the comparison fair.
-
-Now run your filter in one terminal and Madgwick in another, and echo both `/imu/rpy` and `/imu/madgwick_out`.
-
-To extract roll/pitch/yaw from the Madgwick quaternion output, you can pipe it through this quick one-liner:
-
-```bash
-ros2 topic echo /imu/madgwick_out --field orientation
-```
-
-Or write a short subscriber (optional) that calls a quaternion-to-euler conversion to print Madgwick's angles in the same format as your `/imu/rpy`.
-
-**Task 4:** With the robot sitting completely still, compare the noise level of `/imu/rpy` (your filter) versus Madgwick on roll and pitch over 30 seconds. Then tilt the robot quickly back and forth several times — which filter responds faster, and which is smoother? What does this tell you about the different trade-offs each makes?
-
----
-
-## Tilt Safety Node
-
-### Step 5 — Write `tilt_safety_node.py`
-
-Now use the filtered orientation. This node watches `/imu/filtered` and immediately publishes zero velocity to `/cmd_vel` if the robot's roll or pitch exceeds a safety threshold.
-
-```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/tilt_safety_node.py
-```
-
-```python
-#!/usr/bin/env python3
-"""
-tilt_safety_node.py
-
-Watches /imu/filtered for roll and pitch. If either exceeds TILT_THRESHOLD_DEG,
-publishes a zero-velocity Twist to /cmd_vel to cut the robot's motion.
-
-This is a software emergency stop based on the robot's own orientation estimate.
-"""
-
-import math
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import Imu
+import time
 from geometry_msgs.msg import Twist
 
-
-# Degrees of tilt in roll or pitch that triggers the estop.
-# 30° is aggressive enough to catch a real fall but forgiving enough
-# during a normal walking gait.
-TILT_THRESHOLD_DEG = 30.0
-
-TILT_THRESHOLD_RAD = math.radians(TILT_THRESHOLD_DEG)
+ACTION_DURATION = 1.0   # seconds per discrete action
 
 
-def quaternion_to_euler(x, y, z, w):
-    """Return (roll, pitch, yaw) in radians from a unit quaternion."""
-    # Roll (x-axis rotation)
-    sinr_cosp = 2.0 * (w * x + y * z)
-    cosr_cosp = 1.0 - 2.0 * (x * x + y * y)
-    roll = math.atan2(sinr_cosp, cosr_cosp)
+class PupperActions:
 
-    # Pitch (y-axis rotation)
-    sinp = 2.0 * (w * y - z * x)
-    sinp = max(-1.0, min(1.0, sinp))   # clamp for numerical safety
-    pitch = math.asin(sinp)
+    def __init__(self, node):
+        self.node = node
+        self.pub = node.create_publisher(Twist, '/cmd_vel', 10)
+        self.estopped = False
 
-    # Yaw (z-axis rotation)
-    siny_cosp = 2.0 * (w * z + x * y)
-    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
-    yaw = math.atan2(siny_cosp, cosy_cosp)
+    def _run(self, linear_x=0.0, linear_y=0.0, angular_z=0.0):
+        twist = Twist()
+        twist.linear.x = linear_x
+        twist.linear.y = linear_y
+        twist.angular.z = angular_z
+        end_time = time.time() + ACTION_DURATION
+        while time.time() < end_time:
+            if self.estopped:
+                break
+            self.pub.publish(twist)
+            time.sleep(0.1)
+        self.stop()
 
-    return roll, pitch, yaw
+    def move_forward(self):
+        # Task: publish a forward Twist using the linear.x value you
+        # settled on in Week 3's teleop lab.
+        # Your code
+
+    def move_backward(self):
+        # Task: same idea, negative linear.x. Check your Week 3 notes
+        # on why reverse should be slower than forward.
+        # Your code
+
+    def turn_left(self):
+        # Task: publish an angular.z Twist for an in-place left turn.
+        # Your code
+
+    def turn_right(self):
+        # Your code
+
+    def stop(self):
+        self.pub.publish(Twist())
+```
+
+**Task 3:** Fill in the four movement methods and test each one directly from a Python shell (no LLM involved yet) to confirm the robot moves as expected before wiring it to anything else.
+
+---
+
+## Building the Command Node
+
+### Step 4 — Write the system prompt
+
+Open `llm_command_node.py` (create it in the same package) and write a system prompt that forces the model to output *only* a JSON list drawn from the fixed action vocabulary — nothing else. This is the part that determines whether your parser downstream stays simple or turns into a mess of edge cases.
+
+Your prompt should:
+
+- State the exact allowed tokens: `move_forward`, `move_backward`, `turn_left`, `turn_right`, `stop`
+- Require a JSON array as the *entire* response — no explanation, no markdown code fences, no extra words
+- Give a few example transcript → output pairs, including at least one multi-step example (e.g. "turn around and come back" → `["turn_left", "turn_left", "move_forward"]`)
+- Tell the model what to output if the transcript doesn't match any known action (an empty list `[]`, not a guess)
+
+**Task 4:** Write this system prompt (aim for a fairly short, tightly scoped prompt — you don't need CS123's ~50 lines here since the vocabulary is smaller). Test it directly against the OpenAI API with a few example sentences before wiring it into the node, and note any transcripts that produced output outside your expected format.
+
+### Step 5 — Implement the node
+
+```python
+#!/usr/bin/env python3
+"""
+llm_command_node.py
+
+Subscribes to /voice_transcript, sends each transcript to the OpenAI
+API constrained to a fixed action vocabulary, and executes the
+resulting action sequence via PupperActions. Subscribes to
+/touch_estop and aborts any in-progress sequence immediately.
+
+Runs on the robot (CM4) — requires internet access.
+"""
+
+import json
+import os
+import rclpy
+from rclpy.node import Node
+from std_msgs.msg import String, Bool
+from openai import OpenAI
+from .pupper_actions import PupperActions
+
+VALID_ACTIONS = {'move_forward', 'move_backward', 'turn_left', 'turn_right', 'stop'}
+
+SYSTEM_PROMPT = """
+# Task: paste the system prompt you wrote in Step 4 here.
+"""
 
 
-class TiltSafetyNode(Node):
+class LLMCommandNode(Node):
 
     def __init__(self):
-        super().__init__('tilt_safety')
+        super().__init__('llm_command_node')
+        self.actions = PupperActions(self)
+        self.client = OpenAI()  # reads OPENAI_API_KEY from the environment
 
-        self.estop_active = False
+        self.create_subscription(String, '/voice_transcript', self._on_transcript, 10)
+        self.create_subscription(Bool, '/touch_estop', self._on_estop, 10)
 
-        self.sub = self.create_subscription(
-            Imu, '/imu/filtered', self.imu_callback, 10
-        )
-        self.pub_cmd = self.create_publisher(Twist, '/cmd_vel', 10)
+        self.get_logger().info('LLMCommandNode ready')
 
-        self.get_logger().info(
-            f'TiltSafetyNode started — threshold: ±{TILT_THRESHOLD_DEG}°'
-        )
+    def _on_estop(self, msg):
+        self.actions.estopped = msg.data
+        if msg.data:
+            self.get_logger().warn('Touch estop triggered — aborting action queue')
 
-    def imu_callback(self, msg: Imu):
-        ox = msg.orientation.x
-        oy = msg.orientation.y
-        oz = msg.orientation.z
-        ow = msg.orientation.w
+    def _on_transcript(self, msg):
+        if self.actions.estopped:
+            return
 
-        # Task: Call quaternion_to_euler(ox, oy, oz, ow) to get roll and pitch.
-        roll, pitch, _ = # Your code
+        transcript = msg.data
+        self.get_logger().info(f'Heard: "{transcript}"')
 
-        roll_deg  = math.degrees(roll)
-        pitch_deg = math.degrees(pitch)
-
-        # Task: Check whether abs(roll) or abs(pitch) exceeds TILT_THRESHOLD_RAD.
-        # If it does:
-        #   - Set self.estop_active = True
-        #   - Log a warning with the actual roll/pitch values
-        #   - Publish a zero Twist to /cmd_vel (Twist() with all fields at 0.0)
-        # If the robot is within the safe range and self.estop_active was True:
-        #   - Set self.estop_active = False
-        #   - Log an info message that the emergency stop has cleared
-
+        # Task: call self.client.chat.completions.create() with the
+        # system prompt and the transcript as the user message.
+        # Use a small, fast model — check OpenAI's current model list
+        # for the cheapest general-purpose option, pricing and model
+        # names change often. Set temperature=0 for consistency.
         # Your code
+        raw_response = None  # replace with the model's text output
+
+        # Task: parse raw_response as JSON. Handle the case where the
+        # model wraps it in a code fence (```json ... ```) or adds
+        # stray text despite the prompt — strip and retry before
+        # giving up. On any parse failure, log a warning and treat it
+        # as an empty action list rather than crashing the node.
+        # Your code
+        actions = []
+
+        for action in actions:
+            if self.actions.estopped:
+                self.get_logger().warn('Estop during sequence — stopping remaining actions')
+                break
+            if action not in VALID_ACTIONS:
+                self.get_logger().warn(f'Ignoring unknown action: {action}')
+                continue
+            getattr(self.actions, action)()
 
 
 def main(args=None):
     rclpy.init(args=args)
-    node = TiltSafetyNode()
+    node = LLMCommandNode()
     rclpy.spin(node)
     node.destroy_node()
     rclpy.shutdown()
@@ -486,50 +331,54 @@ if __name__ == '__main__':
     main()
 ```
 
-Register in `setup.py`:
-
-```
-'tilt_safety = mini_pupper_labs.tilt_safety_node:main',
-```
-
-Run the full stack: bringup on the robot, your filter node, and the tilt safety node. Then drive the robot with teleop and manually tilt it past 30° while it's mid-walk.
-
-**Task 5:** Screenshot the tilt safety node's log output at the moment it triggers — show the roll/pitch values that triggered it and the "estop cleared" message when you set it back down. What happens to the robot's motion when the estop fires?
+**Task 5:** Implement the two `# Task` sections above — the API call and the defensive JSON parsing. Register the node in `setup.py`.
 
 ---
 
-## Looking Ahead
+## Putting It All Together
 
-Also worth noting: `orientation_covariance[0] = -1` in the raw IMU data is why SLAM's `use_imu_data = false` exists. Now that you've published `/imu/filtered` with a real covariance, you have everything you'd need to re-enable it in Cartographer — change `tracking_frame` to use `/imu/filtered` instead and set `use_imu_data = true` in `slam.lua`. That's left as an optional extension.
+### Step 6 — Full system test
 
-**DELIVERABLE:** The tilt safety demo from Task 5, plus a explanation of why pure gyro integration drifts and why pure accelerometer tilt estimation is noisy during motion — and how the complementary filter addresses both.
+Run everything on the robot via SSH (separate terminals or `&`):
+
+```bash
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+export OPENAI_API_KEY="your-key-here"
+ros2 run mini_pupper_labs voice_transcript_node & \
+ros2 run mini_pupper_labs llm_command_node & \
+ros2 run mini_pupper_labs touch_node
+```
+
+**Task 6:** Test a single-step command ("move forward"), a multi-step command ("turn left, then move forward, then stop"), and a nonsense phrase that shouldn't match anything. Record what the robot does in each case, and confirm the touch estop halts an in-progress sequence.
 
 ---
 
 ## Tasks
 
-1. `orientation_covariance` array from `/imu/data` and REP-145 interpretation (Step 1).
-2. Peak-to-peak roll spread at rest vs. qualitative behavior while walking (Step 2).
-3. 45° tilt test result and ALPHA comparison (Step 3).
-4. Noise and responsiveness comparison between your filter and Madgwick (Step 4).
-5. Tilt estop demo: screenshot of log with triggering values and cleared message (Step 5).
-6. Deliverable writeup: gyro drift, accel noise, complementary filter explanation.
+1. Confirm `OPENAI_API_KEY` visibility difference between interactive and non-interactive SSH sessions (Step 1).
+2. `/voice_transcript` publishing full sentences, not single keywords (Step 2).
+3. Four movement methods in `pupper_actions.py` implemented and manually tested (Step 3).
+4. System prompt written and tested directly against the API with example transcripts (Step 4).
+5. API call and defensive JSON parsing implemented in `llm_command_node.py` (Step 5).
+6. Full run: single-step command, multi-step command, unmatched phrase, and a mid-sequence touch estop (Step 6).
 
 ---
 
 ## Troubleshooting
 
-??? question "`/imu/data` is in `ros2 topic list` but shows no messages"
-    Same discovery-vs-transport issue from previous weeks. Try `ros2 daemon stop && ros2 daemon start` and confirm `ROS_DOMAIN_ID=42` is set on both machines. If `ros2 topic hz /imu/data` shows nothing from the PC, the DDS transport layer isn't bridging the topic despite the node being listed.
+??? question "The model's response isn't valid JSON"
+    Usually it's wrapping the array in a markdown code fence or adding a sentence like "Sure, here's the list:" despite the system prompt. Strip anything before the first `[` and after the last `]` before calling `json.loads()`, and consider lowering `temperature` to 0 if you haven't already — higher temperatures make the model more likely to drift from the exact format.
 
-??? question "Roll and pitch are jumping ±180° randomly"
-    This is a gimbal-lock symptom — `atan2` is discontinuous near its boundary values, and if `az` is near zero (robot tilted close to 90°) the output wraps. The complementary filter inherits this from the accel-angle formula. It's expected at extreme tilt angles. For normal operating range (±60°) it won't occur.
+??? question "`OPENAI_API_KEY` is set but the node still fails to authenticate"
+    Confirm it's actually present in the process that launched the node, not just your login shell — see the Step 1 warning. Run `ros2 run mini_pupper_labs llm_command_node` from the same terminal where you exported the key, not a fresh SSH session.
 
-??? question "Filter output looks correct for roll but pitch seems inverted"
-    The IMU is mounted with a specific orientation inside the robot and the `imu_interface.py` driver swaps and negates some axes to account for it. If pitch is negated relative to what you expect, negate `accel_pitch` in your filter — it's a sign convention issue, not a bug in the math.
+??? question "The robot keeps moving briefly after a touch estop"
+    Check that `PupperActions._run()` is checking `self.estopped` *inside* the sleep loop, not just once before it starts. A check only at the top of the method won't interrupt an action that's already running.
 
-??? question "`imu_filter_madgwick_node` crashes with a parameter error"
-    The parameter name changed across `imu_tools` versions. Run `ros2 param list /imu_filter_madgwick_node` once it starts and check the exact names. The key ones to set are `use_mag` (disable magnetometer) and `publish_tf` (disable TF output to avoid conflicts with bringup's TF tree).
+??? question "vosk mishears a command and the robot does the wrong thing"
+    This is the real tradeoff of dropping a fixed keyword grammar for free dictation — it's fuzzier than a small closed vocabulary. If this happens often, consider having `llm_command_node` speak back a short confirmation before executing (a natural next extension using the robot's speaker), or falling back to a smaller set of trigger phrases for anything safety-critical.
 
-??? question "Tilt safety fires immediately when bringup starts"
-    The IMU takes about 2 seconds to calibrate on startup (200 samples at 100 Hz). During that window it publishes garbage values. Add a short startup delay to `TiltSafetyNode.__init__` — `self.create_timer(2.0, self._enable)` with a flag `self.enabled = False` — and only check tilt once `self.enabled` is True.
+??? question "API calls succeed sometimes and time out other times"
+    Classroom wifi can be inconsistent. Wrap the API call in a `try/except` with a short timeout, and on failure, log it and treat the transcript as producing no actions rather than letting the node hang or crash.
+
+---
