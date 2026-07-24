@@ -51,21 +51,15 @@ The upside of this design compared to something like a live voice-to-voice API: 
 On the robot:
 
 ```bash
-pip install openai --break-system-packages
+pip install google-genai --break-system-packages
 ```
 
-Store your API key as an environment variable rather than hardcoding it anywhere that could end up on GitHub:
-
 ```bash
-echo 'export OPENAI_API_KEY="your-key-here"' >> ~/.bashrc
+echo 'export GEMINI_API_KEY="your-key-here"' >> ~/.bashrc
 source ~/.bashrc
 ```
 
-!!! warning "Non-interactive SSH sessions don't source `.bashrc`"
-    This is the same gotcha as `ROS_DOMAIN_ID` — if you launch `llm_command_node` via a one-line `ssh ubuntu@<robot-ip> "ros2 run ..."` command, the environment variable won't be there even though it works fine in an interactive session. Export it explicitly in the same command, e.g. `ssh ubuntu@<robot-ip> "export OPENAI_API_KEY=... && ros2 run mini_pupper_labs llm_command_node"`, or add the export directly to your startup script.
-
-**Task 1:** Confirm the key is visible with `python3 -c "import os; print(bool(os.environ.get('OPENAI_API_KEY')))"` — both in an interactive SSH session and in a non-interactive one (`ssh ubuntu@<robot-ip> "python3 -c ..."`). Note which one fails and why.
-
+**Task 1:** Confirm the key is visible with `python3 -c "import os; print(bool(os.environ.get('OPENAI_API_KEY')))"`.
 ---
 
 ## Building the Transcript Node
@@ -75,6 +69,8 @@ source ~/.bashrc
 Create the file:
 
 ```bash
+cd ~/ros2_ws/src
+ros2 pkg create --build-type ament_python mini_pupper_labs
 nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/voice_transcript_node.py
 ```
 
@@ -111,7 +107,7 @@ class VoiceTranscriptNode(Node):
         self.publisher = self.create_publisher(String, '/voice_transcript', 10)
         self.audio_queue = queue.Queue()
 
-        self.model = Model('/home/ubuntu/vosk-model')
+        self.model = Model('/home/ubuntu/demo_assets/vosk-model-small-en-us-0.15')
         self.recognizer = KaldiRecognizer(self.model, SAMPLE_RATE)
 
         self.get_logger().info('VoiceTranscriptNode ready — listening')
@@ -135,6 +131,7 @@ class VoiceTranscriptNode(Node):
                 # Task: if `text` is non-empty, publish it on /voice_transcript
                 # and log it. Don't filter for specific words here — that's
                 # the LLM's job now, not this node's.
+
                 # Your code
 
 
@@ -150,7 +147,7 @@ if __name__ == '__main__':
     main()
 ```
 
-**Task 2:** Register `voice_transcript_node` in `setup.py`, build, and confirm `ros2 topic echo /voice_transcript` shows full sentences (not single words) as you speak.
+**Task 2:** Register `voice_transcript_node` in `setup.py`, build, and confirm `ros2 topic echo /voice_transcript` shows full sentences as you speak. Take screenshot.
 
 ---
 
@@ -161,7 +158,7 @@ if __name__ == '__main__':
 This is the equivalent of a Karel-style API: a small set of named methods that hide the `Twist` details.
 
 ```bash
-touch ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/pupper_actions.py
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/pupper_actions.py
 ```
 
 ```python
@@ -220,7 +217,24 @@ class PupperActions:
         self.pub.publish(Twist())
 ```
 
-**Task 3:** Fill in the four movement methods and test each one directly from a Python shell (no LLM involved yet) to confirm the robot moves as expected before wiring it to anything else.
+**Task 3:** Fill in the four movement methods and test each one directly from a Python shell to confirm the robot moves as expected.
+```python
+import rclpy
+from rclpy.node import Node
+from mini_pupper_labs.pupper_actions import PupperActions
+
+rclpy.init()
+node = Node('test_pupper_actions')
+actions = PupperActions(node)
+
+actions.#your code
+...
+
+
+
+node.destroy_node
+rclpy.shutdown()
+```
 
 ---
 
@@ -228,7 +242,7 @@ class PupperActions:
 
 ### Step 4 — Write the system prompt
 
-Open `llm_command_node.py` (create it in the same package) and write a system prompt that forces the model to output *only* a JSON list drawn from the fixed action vocabulary — nothing else. This is the part that determines whether your parser downstream stays simple or turns into a mess of edge cases.
+Create `llm_command_node.py` and write a system prompt that forces the model to output a JSON list drawn from the fixed action vocabulary. This is the part that determines whether your parser downstream stays simple or turns into a mess of edge cases.
 
 Your prompt should:
 
@@ -237,7 +251,7 @@ Your prompt should:
 - Give a few example transcript → output pairs, including at least one multi-step example (e.g. "turn around and come back" → `["turn_left", "turn_left", "move_forward"]`)
 - Tell the model what to output if the transcript doesn't match any known action (an empty list `[]`, not a guess)
 
-**Task 4:** Write this system prompt (aim for a fairly short, tightly scoped prompt — you don't need CS123's ~50 lines here since the vocabulary is smaller). Test it directly against the OpenAI API with a few example sentences before wiring it into the node, and note any transcripts that produced output outside your expected format.
+**Task 4:** Write this system prompt (aim for a fairly short). Test it directly against the OpenAI API with a few example sentences before wiring it into the node, and note any transcripts that produced output outside your expected format.
 
 ### Step 5 — Implement the node
 
@@ -246,20 +260,21 @@ Your prompt should:
 """
 llm_command_node.py
 
-Subscribes to /voice_transcript, sends each transcript to the OpenAI
+Subscribes to /voice_transcript, sends each transcript to the Gemini
 API constrained to a fixed action vocabulary, and executes the
 resulting action sequence via PupperActions. Subscribes to
 /touch_estop and aborts any in-progress sequence immediately.
 
 Runs on the robot (CM4) — requires internet access.
+use model="gemini-flash-latest"
 """
 
 import json
-import os
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import String, Bool
-from openai import OpenAI
+from google import genai
+from google.genai import types
 from .pupper_actions import PupperActions
 
 VALID_ACTIONS = {'move_forward', 'move_backward', 'turn_left', 'turn_right', 'stop'}
@@ -274,7 +289,7 @@ class LLMCommandNode(Node):
     def __init__(self):
         super().__init__('llm_command_node')
         self.actions = PupperActions(self)
-        self.client = OpenAI()  # reads OPENAI_API_KEY from the environment
+        self.client = genai.Client()  # reads GEMINI_API_KEY from the environment
 
         self.create_subscription(String, '/voice_transcript', self._on_transcript, 10)
         self.create_subscription(Bool, '/touch_estop', self._on_estop, 10)
@@ -293,11 +308,12 @@ class LLMCommandNode(Node):
         transcript = msg.data
         self.get_logger().info(f'Heard: "{transcript}"')
 
-        # Task: call self.client.chat.completions.create() with the
-        # system prompt and the transcript as the user message.
-        # Use a small, fast model — check OpenAI's current model list
-        # for the cheapest general-purpose option, pricing and model
-        # names change often. Set temperature=0 for consistency.
+        # Task: call self.client.models.generate_content(), passing the
+        # transcript as `contents` and your SYSTEM_PROMPT inside a
+        # types.GenerateContentConfig as `system_instruction`. Set
+        # temperature=0 for consistency. Wrap the call in a try/except —
+        # on any failure, log a warning and fall back to raw_response = '[]'
+        # rather than letting the node crash.
         # Your code
         raw_response = None  # replace with the model's text output
 
@@ -339,46 +355,25 @@ if __name__ == '__main__':
 
 ### Step 6 — Full system test
 
-Run everything on the robot via SSH (separate terminals or `&`):
+Run everything on the robot via SSH (separate terminals):
 
 ```bash
 source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
-export OPENAI_API_KEY="your-key-here"
-ros2 run mini_pupper_labs voice_transcript_node & \
-ros2 run mini_pupper_labs llm_command_node & \
-ros2 run mini_pupper_labs touch_node
+ros2 run mini_pupper_labs voice_transcript_node
+ros2 run mini_pupper_labs llm_command_node
 ```
 
-**Task 6:** Test a single-step command ("move forward"), a multi-step command ("turn left, then move forward, then stop"), and a nonsense phrase that shouldn't match anything. Record what the robot does in each case, and confirm the touch estop halts an in-progress sequence.
+**Task 6:** Test a single-step command ("move forward"), a multi-step command ("turn left, then move forward"), and a nonsense phrase that shouldn't match anything. Record what the robot does in each case.
 
 ---
 
 ## Tasks
 
-1. Confirm `OPENAI_API_KEY` visibility difference between interactive and non-interactive SSH sessions (Step 1).
+1. Confirm `GEMINI_API_KEY` visibility difference between interactive and non-interactive SSH sessions (Step 1).
 2. `/voice_transcript` publishing full sentences, not single keywords (Step 2).
 3. Four movement methods in `pupper_actions.py` implemented and manually tested (Step 3).
 4. System prompt written and tested directly against the API with example transcripts (Step 4).
 5. API call and defensive JSON parsing implemented in `llm_command_node.py` (Step 5).
 6. Full run: single-step command, multi-step command, unmatched phrase, and a mid-sequence touch estop (Step 6).
-
----
-
-## Troubleshooting
-
-??? question "The model's response isn't valid JSON"
-    Usually it's wrapping the array in a markdown code fence or adding a sentence like "Sure, here's the list:" despite the system prompt. Strip anything before the first `[` and after the last `]` before calling `json.loads()`, and consider lowering `temperature` to 0 if you haven't already — higher temperatures make the model more likely to drift from the exact format.
-
-??? question "`OPENAI_API_KEY` is set but the node still fails to authenticate"
-    Confirm it's actually present in the process that launched the node, not just your login shell — see the Step 1 warning. Run `ros2 run mini_pupper_labs llm_command_node` from the same terminal where you exported the key, not a fresh SSH session.
-
-??? question "The robot keeps moving briefly after a touch estop"
-    Check that `PupperActions._run()` is checking `self.estopped` *inside* the sleep loop, not just once before it starts. A check only at the top of the method won't interrupt an action that's already running.
-
-??? question "vosk mishears a command and the robot does the wrong thing"
-    This is the real tradeoff of dropping a fixed keyword grammar for free dictation — it's fuzzier than a small closed vocabulary. If this happens often, consider having `llm_command_node` speak back a short confirmation before executing (a natural next extension using the robot's speaker), or falling back to a smaller set of trigger phrases for anything safety-critical.
-
-??? question "API calls succeed sometimes and time out other times"
-    Classroom wifi can be inconsistent. Wrap the API call in a `try/except` with a short timeout, and on failure, log it and treat the transcript as producing no actions rather than letting the node hang or crash.
 
 ---

@@ -26,7 +26,7 @@
 
 ## Background
 
-Now time for a cool project. We now want the robot to walk into a small room or a little setup of boxes, build a map, detect and locate objects in that space, respond to spoken commands, and use the touch sensor on the back to physically stop it at any time. 
+Now we want the robot to walk into a small room or a little setup of boxes, build a map, detect and locate objects in that space, respond to spoken commands, and use the touch sensor on the back to physically stop it at any time. 
 
 ### The full system
 
@@ -44,16 +44,9 @@ Five ROS2 nodes will need to run together, some of them can be reused or changed
 
 The state machine that connects them lives in `explorer_node`. It listens to `/object_inventory` (from `detector_node`), `/voice_command` (from `voice_node`), and `/touch_estop` (from `touch_node`), and makes three decisions: keep exploring, stop cleanly, or emergency stop.
 
-### Why the voice node runs on the robot
-
-The microphone is a hardware I2S device on the robot's CM4. You can't stream raw audio over ROS2 without significant latency and bandwidth cost — it's much cleaner to run `vosk` locally on the robot where the audio device lives, and only publish small string messages over the network when a keyword is recognized. The trade-off is that `vosk`'s small model takes about 200 MB of RAM on the CM4.
-
 ### The touch pad
 
-The Mini Pupper 2's capacitive touch pad is connected to the ESP32, which communicates with the CM4 over USB serial. The board support package (BSP) installs `screen /dev/ttyUSB0 115200` as the `esp32-cli` alias — that's the same serial port the servo commands flow through. The touch state is a separate message type in the ESP32's serial protocol. Your `touch_node` reads that serial stream, parses the touch packet, and republishes it as a standard `std_msgs/Bool` on `/touch_estop`.
-
-!!! warning "ttyUSB0 vs ttyUSB1"
-    If bringup is already running when you test `touch_node`, the servo interface may already hold `/dev/ttyUSB0`. The touch pad may appear on `/dev/ttyUSB1` in that case. Check `ls /dev/ttyUSB*` on the robot before hardcoding the port.
+The Mini Pupper 2's capacitive touch pad is connected to the ESP32, which communicates with the CM4 over USB serial. The board support package (BSP) installs `screen /dev/ttyUSB0 115200` as the `esp32-cli` alias. The touch state is a separate message type in the ESP32's serial protocol. Your `touch_node` reads that serial stream, parses the touch packet, and republishes it as a standard `std_msgs/Bool` on `/touch_estop`.
 
 ### Object position pipeline
 
@@ -63,10 +56,10 @@ The OAK-D Lite gives you a 3D position in camera frame for each detection (X for
 camera_optical_frame -> base_link -> odom -> map
 ```
 
-`tf2_ros` handles this — look up the transform from `camera_optical_frame` to `map` at the time of detection, and apply it to the XYZ point from the depth pipeline.
+`tf2_ros` handles this. Look up the transform from `camera_optical_frame` to `map` at the time of detection, and apply it to the XYZ point from the depth pipeline.
 
 !!! note "Deduplication"
-    The same chair will be detected many times as the robot walks past it. A simple rule — if an object of the same class already exists in the inventory within 0.5 m of this detection, skip it — keeps the manifest readable. 
+    The same chair will be detected many times as the robot walks past it. A simple rule — if an object of the same class already exists in the inventory within 0.5 m of this detection, skip it. 
 
 ---
 
@@ -90,12 +83,12 @@ Confirm the microphone device is visible:
 python3 -c "import sounddevice; print(sounddevice.query_devices())"
 ```
 
-You should see an I2S or ALSA device listed. Note the device index — you'll need it in `voice_node`.
+You should see an ALSA device listed. Note the device index — you'll need it in `voice_node`.
 
 !!! warning "No HDMI cable during audio use"
-    The BSP README notes this explicitly: the I2S audio device is headphone output 0 only when no HDMI cable is connected. HDMI reassigns the headphone index and the microphone may also be affected. Unplug HDMI before running any audio node.
+    The BSP README notes this explicitly: the I2S audio device is headphone output 0 only when no HDMI cable is connected. HDMI reassigns the headphone index and the microphone may also be affected.
 
-**Task 1:** Paste the `sounddevice.query_devices()` output from your robot and identify which device index corresponds to the I2S microphone.
+**Task 1:** Paste the `sounddevice.query_devices()` output from your robot and identify which device index corresponds to the ALSA microphone.
 
 ### Step 2 — Verify the Touch Pad via Serial
 
@@ -855,27 +848,5 @@ A few natural extensions if you want to keep pushing:
 5. `/object_inventory` with at least two distinct object classes and positions (Step 5).
 6. Full system run: 60+ seconds of exploration, 3+ objects, voice stop, manifest (Step 7).
 7. Touch estop demo: halt confirmed within 1 second, log showing STOPPED transition (Step 7).
-
----
-
-## Troubleshooting
-
-??? question "vosk loads but `AcceptWaveform` never returns True"
-    Check that `SAMPLE_RATE = 16000` in `voice_node.py` matches the actual hardware rate. Run `python3 -c "import sounddevice; print(sounddevice.query_devices())"` and look for the default samplerate on your I2S device. If it's 48000, change `SAMPLE_RATE` to 48000 and create the `KaldiRecognizer` with that value instead.
-
-??? question "TF transform lookup fails with `LookupException`"
-    The TF tree needs time to populate after SLAM starts. The first few seconds of a run will always fail lookups — the `try/except` in `detector_node` handles this gracefully. If it keeps failing after 30+ seconds, check that `ROS_DOMAIN_ID=42` is set on both machines and run `ros2 run tf2_tools view_frames` to see what's actually in the tree.
-
-??? question "Depth image (`/stereo/depth`) is not publishing"
-    The OAK-D Lite depth stream requires both stereo cameras to be running. Confirm the depthai pipeline is configured for stereo mode in your Week 9 setup. Run `ros2 topic list | grep stereo` — if the topic is absent entirely, the pipeline is in RGB-only mode.
-
-??? question "`/touch_estop` never publishes"
-    The touch pad serial packet format varies by BSP version — re-run `esp32-cli` from Task 2 and confirm exactly what string the ESP32 sends. If bringup is already holding `ttyUSB0`, change `SERIAL_PORT` to `/dev/ttyUSB1` in `touch_node.py`.
-
-??? question "Explorer node sends goals but robot doesn't move"
-    Confirm Nav2 is fully initialized before the explorer starts sending goals — the `waitUntilNav2Active()` call in `__init__` handles this, but if Nav2 is started after the explorer, the wait may time out. Restart the explorer node after Nav2 is up.
-
-??? question "Frontier detection finds no frontiers even in a new room"
-    This usually means the map isn't publishing yet (SLAM takes a few seconds to produce the first `/map` message) or `map_callback` isn't receiving it. Run `ros2 topic hz /map` to confirm the grid is updating, and check `ROS_DOMAIN_ID` on the PC running SLAM matches the PC running the explorer.
 
 ---

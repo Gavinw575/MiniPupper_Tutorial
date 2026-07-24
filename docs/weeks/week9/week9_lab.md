@@ -23,12 +23,9 @@
 
 ## Background
 
+This week we get to use the [OAK-D Lite](https://github.com/luxonis/oak-hardware/blob/master/DM9095_OAK-D-LITE_DepthAI_USB3C/Datasheet/OAK-D-Lite_Datasheet.pdf) camera. This camera has an own board [Myraid X VPU](https://www.assured-systems.com/faq/what-is-a-movidius-myriad-x-vision-processing-unit/) that can run compiled neural networks directly on the camera. The CM4 only recieves small structured results such as bounding boxes, class IDs, and confidence scores.
 
-The week we get to use the [OAK-D Lite](https://github.com/luxonis/oak-hardware/blob/master/DM9095_OAK-D-LITE_DepthAI_USB3C/Datasheet/OAK-D-Lite_Datasheet.pdf) camera. This camera has an own board [Myraid X VPU](https://www.assured-systems.com/faq/what-is-a-movidius-myriad-x-vision-processing-unit/) that can run compiled neural networks directly on the camera. The CM4 only recieves small structured results such as bounding boxes, class IDs, and confidence scores.
-
-For the Pupper this matters a lot. The CM4 is a low powered ARM board, if we were to tream frame data off the camera and run inderence on them, we would see an extreme amount of lag so it would be to slow to be useful. But running the same network on the VPU and only sending detection results over USB takes up a dramatically less amount of CPU time. 
-
-This week's pipeline looks like this:
+For the Pupper this matters a lot. The CM4 is a low powered ARM board, if we were to take frame data off the camera and run inference on them, we would see an extreme amount of lag so it would be to slow to be useful. But running the same network on the VPU and only sending detection results over USB takes up a lot less amount of CPU time. 
 
 ```
 OAK-D VPU:   Camera -> YOLOv6-nano -> ObjectTracker -> TrackingArray (USB)
@@ -38,7 +35,7 @@ Robot:       stanford_controller receives /cmd_vel -> moves
 Robot LCD:   live annotated frame from VPU -> ST7789 display
 ```
 
-The `movement_node` runs on the PC, not the robot — the same reason SLAM and Nav2 ran on the PC. 
+The `movement_node` runs on the PC for the same reason SLAM and Nav2 ran on the PC. 
 
 ---
 
@@ -66,7 +63,7 @@ cat /etc/udev/rules.d/80-movidius.rules
 
 It should contain: `SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"`
 
-**Task 1:** Paste both the depthai version and the `lsusb` output confirming the camera is recognized.
+**Task 1:** Screenshot both the depthai version and the `lsusb` output confirming the camera is recognized.
 
 ---
 
@@ -74,17 +71,17 @@ It should contain: `SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"`
 
 ### Step 2 — Understand the Pipeline Structure
 
-Lets look at the nodes well be using
+Look at the nodes we'll be using
 
 ```bash
-python3 -c "import depthai as dai; help(dai.node.ColorCamera)" 2>/dev/null | head -30
+python3 -c "import depthai as dai; help(dai.node.ColorCamera)" # change ColorCamera to the other nodes to take a look at them
 ```
 
 The three DepthAI nodes you'll wire together:
 
-- ColorCamera — captures frames from the RGB sensor
-- MobileNetDetectionNetwork (or YoloDetectionNetwork) — runs a neural net on the VPU, outputs bounding boxes
-- ObjectTracker — keeps track of individual detected objects across frames, assigns persistent IDs
+- ColorCamera —> captures frames from the RGB sensor
+- DetectionNetwork —> runs a neural net on the VPU, outputs bounding boxes
+- ObjectTracker —> keeps track of individual detected objects across frames, assigns persistent IDs
 
 They connect like a pipeline: camera frames, detection network, object tracker, your output queue.
 
@@ -162,15 +159,14 @@ class OakDetectionPublisher(Node):
 
         # Task: Create a ColorCamera node on the pipeline.
         # Set its preview size to (640, 400) and set interleaved to False.
-        # Hint: cam = pipeline.create(dai.node.ColorCamera)
-        #        cam.setPreviewSize(w, h)
-        #        cam.setInterleaved(False)
 
-        cam = # Your code
+        cam = pipeline.create(dai.node.
+        
+        # Your code
 
-        # Task: Create a YoloDetectionNetwork node.
+        # Task: Create a DetectionNetwork node.
         # Load the model from the Luxonis model zoo using:
-        #   nn = pipeline.create(dai.node.YoloDetectionNetwork)
+        #   nn = pipeline.create(
         #   nn_config = dai.NNModelDescription(MODEL_SLUG)
         #   nn.build(cam.preview, nn_config)
 
@@ -179,18 +175,15 @@ class OakDetectionPublisher(Node):
         # Task: Create an ObjectTracker node and connect it to the
         # detection network output.
         # Hint:
-        #   tracker = pipeline.create(dai.node.ObjectTracker)
-        #   tracker.build(
-        #       inputImageFrame=cam.preview,
-        #       inputDetections=nn.out
-        #   )
+        #   tracker = pipeline.create(
+        #   tracker.build(inputImageFrame = , inputDetections = )
 
         tracker = # Your code
 
         # Get the tracklet output queue from the object tracker.
         # passthroughTrackerFrame gives us annotated frames for the LCD.
         self.tracklets_queue = tracker.out.createOutputQueue()
-        self.frame_queue     = tracker.passthroughTrackerFrame.createOutputQueue()
+        self.frame_queue = tracker.passthroughTrackerFrame.createOutputQueue()
 
         self.device = dai.Device(pipeline)
         self.get_logger().info('DepthAI pipeline built and device opened')
@@ -202,7 +195,7 @@ class OakDetectionPublisher(Node):
     def poll(self):
         """Pull one batch of results from the VPU and publish."""
         tracklets_msg = self.tracklets_queue.tryGet()
-        frame_msg     = self.frame_queue.tryGet()
+        frame_msg = self.frame_queue.tryGet()
 
         if frame_msg is not None and self.lcd_available:
             self._update_lcd(frame_msg)
@@ -278,17 +271,16 @@ ros2 topic echo /tracking_array
 
 ### Step 4 — Confirm the Screen Is Updating
 
-With `oak_detection_publisher.py` running, stand in front of the robot and move around. The LCD should show a live annotated frame with a bounding box around you.
+With `oak_detection_publisher.py` running, move around the robot. The LCD should show a live annotated frame with a bounding box around you.
 
-**Task 3:** Take a photo of the robot's LCD showing a live detection bounding box. This is your proof the VPU pipeline and display are both working end-to-end.
-
+**Task 3:** Take a photo of the robot's LCD showing a live detection bounding box.
 ---
 
 ## Building the Movement Node
 
 ### Step 5 — Write the Movement Node
 
-This node runs on your **PC**, not the robot. It subscribes to `/tracking_array` and publishes `/cmd_vel` to make the robot turn toward and follow a detected person.
+This node runs on your PC. It subscribes to `/tracking_array` and publishes `/cmd_vel` to make the robot turn toward and follow a detected person.
 
 The control logic:
 
@@ -435,7 +427,7 @@ Stand in front of the robot and walk left and right slowly. It should turn to ke
 !!! warning "Make sure the robot doesn't fall if on table"
     The robot will try to move as soon as it sees a person. Have it on a flat surface with some space around it, and be ready to kill bringup (Ctrl+C) if it starts moving unexpectedly.
 
-**Task 4:** Take a video of the robot following you. Do you notice if it is turning smoothly or is it extremely rough.
+**Task 4:** Take a video of the robot following you. Do you notice if it is turning smoothly or is it rough.
 
 ---
 
@@ -447,9 +439,9 @@ The three main parameters to experiment with:
 
 | Parameter | Effect | Start here if... |
 |---|---|---|
-| `Kp_YAW` | How aggressively it turns to center the target | Oscillates → lower it. Sluggish → raise it. |
-| `FORWARD_SPEED` | How fast it walks toward the person | Too fast/unstable → lower it |
-| `CLOSE_AREA` | How close is "close enough" to stop walking | Stops too far away → lower it. Bumps into you → raise it. |
+| `Kp_YAW` | How aggressively it turns to center the target | Oscillates -> lower it. Sluggish -> raise it. |
+| `FORWARD_SPEED` | How fast it walks toward the person | Too fast/unstable -> lower it |
+| `CLOSE_AREA` | How close is "close enough" to stop walking | Stops too far away -> lower it. Bumps into you -> raise it. |
 
 **Task 5:** Find a set of values where the robot tracks you smoothly. Report your final `Kp_YAW`, `FORWARD_SPEED`, and `CLOSE_AREA` values and take a video of it following you again.
 
@@ -462,24 +454,5 @@ The three main parameters to experiment with:
 3. Photo of the robot LCD showing a live detection bounding box (Step 4).
 4. Tracking behavior description with at least two `Kp_YAW` values compared (Step 6).
 5. Final tuned parameter values and behavior description (Step 7).
-
----
-
-## Troubleshooting
-
-??? question "`lsusb` doesn't show `03e7` at all"
-    The udev rule is probably missing or not applied yet. Check `/etc/udev/rules.d/80-movidius.rules` — it should contain `SUBSYSTEM=="usb", ATTRS{idVendor}=="03e7", MODE="0666"`. If it's missing, add it and run `sudo udevadm control --reload-rules && sudo udevadm trigger`, then unplug and replug the camera.
-
-??? question "Pipeline builds but `tracklets_queue.tryGet()` always returns None"
-    This usually means the model didn't download on first run — the robot needs internet access for the initial download. Run `python3 ~/oak_detection_publisher.py` once while connected to WiFi and wait for the download to complete before running offline. You can confirm the model cached by checking `~/.cache/` for Luxonis model files.
-
-??? question "LCD shows nothing or freezes"
-    Make sure `display_interface` isn't also running — check `ros2 node list` for a display node. If it's there, kill it before starting the oak publisher.
-
-??? question "`/tracking_array` is publishing but movement_node isn't moving the robot"
-    Confirm `ROS_DOMAIN_ID=42` is set in every terminal including the PC one. Run `ros2 topic echo /cmd_vel` to check if the movement node is actually publishing — if you see Twist messages there but the robot isn't moving, bringup on the robot may have died.
-
-??? question "Robot spins continuously even with nobody in front of it"
-    The tracker is probably picking up a false detection. Check `ros2 topic echo /tracking_array` — if detections keep coming with no person present, try raising the confidence threshold in `oak_detection_publisher.py` by filtering out tracklets where `srcImgDetections[0].confidence < 0.5`.
 
 ---
