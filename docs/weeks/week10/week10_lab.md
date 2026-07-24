@@ -8,7 +8,7 @@
 2. Write a frontier-exploration node that drives the robot through an unmapped space.
 3. Log each detected object with its 3D position in the map frame using the TF tree.
 4. Wire the robot's onboard microphone and speaker into the ROS2 state machine so a voice command stops the sweep and prints the inventory.
-5. Use the robot's capacitive touch pad (via the ESP32) as a physical estop that halts the robot at any point during a run.
+5. Use the robot's capacitive touch pads (read directly via Raspberry Pi GPIO) as a physical estop that halts the robot at any point during a run.
 
 ---
 
@@ -18,6 +18,7 @@
 - [tf2_ros Python API](https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Writing-A-Tf2-Listener-Py.html)
 - [Nav2 Simple Commander API](https://docs.nav2.org/commander_api/index.html)
 - [sounddevice documentation](https://python-sounddevice.readthedocs.io/)
+- [RPi.GPIO documentation](https://sourceforge.net/p/raspberry-gpio-python/wiki/BasicUsage/)
 - Week 7 Lab — Cartographer & Map Save/Load
 - Week 8 Lab — Nav2, AMCL, Costmaps & Waypoint Following
 - Week 9 Lab — OAK-D Lite Camera & YOLOv8 Inference
@@ -40,13 +41,27 @@ Five ROS2 nodes will need to run together, some of them can be reused or changed
 | `explorer_node` | PC | Picks frontier goals and sends them to Nav2 (new) |
 | `detector_node` | PC | Runs YOLOv8, gets depth from OAK-D Lite, transforms to map frame, logs inventory (new) |
 | `voice_node` | Robot | Records from the onboard mic, runs vosk, publishes keyword events (new) |
-| `touch_node` | Robot | Polls the ESP32's touch pad, publishes a `Bool` estop signal (new) |
+| `touch_node` | Robot | Polls the touch pads directly via GPIO, publishes a `Bool` estop signal (new) |
 
 The state machine that connects them lives in `explorer_node`. It listens to `/object_inventory` (from `detector_node`), `/voice_command` (from `voice_node`), and `/touch_estop` (from `touch_node`), and makes three decisions: keep exploring, stop cleanly, or emergency stop.
 
 ### The touch pad
 
-The Mini Pupper 2's capacitive touch pad is connected to the ESP32, which communicates with the CM4 over USB serial. The board support package (BSP) installs `screen /dev/ttyUSB0 115200` as the `esp32-cli` alias. The touch state is a separate message type in the ESP32's serial protocol. Your `touch_node` reads that serial stream, parses the touch packet, and republishes it as a standard `std_msgs/Bool` on `/touch_estop`.
+!!! warning "This isn't what you'd guess from the ESP32's other roles"
+    The ESP32 handles servo commands and battery telemetry over its own internal protocol so youd thing that the touch pads go through the same path. They don't. The capacitive touch pads are wired directly to the Raspberry Pi CM4's GPIO pin, bypassing the ESP32 entirely.
+
+The Mini Pupper's capacitive touch pad is wired straight to CM4 GPIO, active-low. The BSP's own demo folder (`mini_pupper_bsp/demos/touch_test.py`) reads them the same way. Your `touch_node` polls these pins directly and republishes the combined state as a standard `std_msgs/Bool` on `/touch_estop`.
+
+BCM pin numbers:
+
+| Pad | BCM pin |
+|---|---|
+| front | 6 |
+| left | 3 |
+| right | 16 |
+| back | 2 |
+
+If your board's touch pads don't respond on these exact pins, check `mini_pupper_bsp/demos/touch_test.py` on your own unit — pin assignments have occasionally shifted between hardware revisions.
 
 ### Object position pipeline
 
@@ -86,22 +101,40 @@ python3 -c "import sounddevice; print(sounddevice.query_devices())"
 You should see an ALSA device listed. Note the device index — you'll need it in `voice_node`.
 
 !!! warning "No HDMI cable during audio use"
-    The BSP README notes this explicitly: the I2S audio device is headphone output 0 only when no HDMI cable is connected. HDMI reassigns the headphone index and the microphone may also be affected.
+    The BSP README notes this explicitly: the ALSA audio device is headphone output 0 only when no HDMI cable is connected. HDMI reassigns the headphone index and the microphone may also be affected.
 
 **Task 1:** Paste the `sounddevice.query_devices()` output from your robot and identify which device index corresponds to the ALSA microphone.
 
-### Step 2 — Verify the Touch Pad via Serial
+### Step 2 — Verify the Touch Pads via GPIO
 
-On the robot, open the ESP32 serial monitor:
+On the robot, run the BSP's own demo to confirm the pads respond and to see which pin corresponds to which pad:
 
 ```bash
-esp32-cli
+python3 ~/mini_pupper_bsp/demos/touch_test.py
 ```
 
-Touch the capacitive pad on the back of the robot. You should see a message in the serial output when it registers contact. Note exactly what the serial packet looks like — your `touch_node` will parse this string.
+Touch each pad on the robot's body in turn and confirm the demo reports a state change. If you'd rather see the raw GPIO reads directly instead of running the demo script, a short one-off check works too:
 
-**Task 2:** Screenshot the serial output when the touch pad is pressed. What does the packet look like, and what changes between "touched" and "not touched"?
+```bash
+python3 -c "
+import RPi.GPIO as GPIO
+import time
+GPIO.setmode(GPIO.BCM)
+pins = {'front': 6, 'left': 3, 'right': 16, 'back': 2}
+for p in pins.values():
+    GPIO.setup(p, GPIO.IN)
+print('Touch pads now — Ctrl+C to stop')
+try:
+    while True:
+        state = {name: GPIO.input(pin) == GPIO.LOW for name, pin in pins.items()}
+        print(state)
+        time.sleep(0.2)
+except KeyboardInterrupt:
+    GPIO.cleanup()
+"
+```
 
+**Task 2:** Paste the output showing a pad's state changing between touched and not touched.
 ---
 
 ## Building the Voice Node
@@ -256,20 +289,32 @@ nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/touch_node.py
 """
 touch_node.py
 
-Reads the ESP32 serial stream and publishes a True on /touch_estop
-whenever the capacitive touch pad is pressed.
+Reads the capacitive touch pads directly via Raspberry Pi GPIO and
+publishes the combined touch state as a std_msgs/Bool on /touch_estop.
+
+No ESP32/serial involvement — the touch pads are wired straight to
+the CM4's GPIO, bypassing the ESP32 entirely.
 
 Runs on the robot.
 """
 
-import serial
 import rclpy
 from rclpy.node import Node
 from std_msgs.msg import Bool
 
-# Adjust if the touch pad appears on ttyUSB1 when bringup is running.
-SERIAL_PORT = '/dev/ttyUSB0'
-BAUD_RATE = 115200
+# Task: import RPi.GPIO. Conventionally imported as GPIO.
+# Your code
+
+# BCM pin numbers for each touch pad, confirmed in Step 2.
+# Adjust these if your unit's pin mapping differs.
+PINS = {
+    'front': 6,
+    'left': 3,
+    'right': 16,
+    'back': 2,
+}
+
+POLL_INTERVAL = 0.05  # seconds
 
 
 class TouchNode(Node):
@@ -279,35 +324,46 @@ class TouchNode(Node):
 
         self.publisher = self.create_publisher(Bool, '/touch_estop', 10)
 
-        # Task: Open a serial.Serial connection to SERIAL_PORT at BAUD_RATE.
-        # Set timeout=0.1 so readline() doesn't block the node permanently.
+        # Task: set the GPIO mode to BCM (GPIO.setmode(GPIO.BCM)), then
+        # configure each pin in PINS as an input (GPIO.setup(pin, GPIO.IN)).
 
-        self.ser = # Your code
+        # Your code
 
-        self.create_timer(0.05, self._poll_serial)
-        self.get_logger().info(f'TouchNode listening on {SERIAL_PORT}')
+        self._was_touched = False
 
-    def _poll_serial(self):
-        # Task: Read a line from self.ser using readline(), decode it as
-        # 'utf-8' with errors='ignore', and strip whitespace.
-        # Check if the line matches the touch packet format you found in Task 2.
-        # If it indicates a touch event, publish Bool(data=True) on /touch_estop.
+        self.create_timer(POLL_INTERVAL, self._poll_gpio)
+        self.get_logger().info('TouchNode listening on GPIO pins ' + str(PINS))
+
+    def _poll_gpio(self):
+        # Task: check whether ANY pad is currently touched. Pads are
+        # active-low, so GPIO.input(pin) == GPIO.LOW means touched.
+        # Use any(...) across all pins in PINS.
+        #
+        # Then: if this touched/not-touched state has CHANGED since the
+        # last poll (compare against self._was_touched), publish a Bool
+        # with the new state and update self._was_touched. Publish on
+        # BOTH transitions — press AND release — not just press. This
+        # matters: Task 4 needs to see an actual True -> False transition
+        # on the topic, not a one-shot event.
 
         # Your code
         pass
 
     def destroy_node(self):
-        if self.ser.is_open:
-            self.ser.close()
+        # Task: release the GPIO pins on shutdown so a crashed or
+        # restarted node doesn't leave them claimed.
+        # Your code
         super().destroy_node()
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = TouchNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    finally:
+        node.destroy_node()
+        rclpy.shutdown()
 
 
 if __name__ == '__main__':
@@ -320,7 +376,7 @@ Register in `setup.py`:
 'touch_node = mini_pupper_labs.touch_node:main',
 ```
 
-**Task 4:** Screenshot `/touch_estop` publishing `True` when you press the touch pad.
+**Task 4:** Run `touch_node`, then `ros2 topic echo /touch_estop` in another terminal. Press a pad and then release it — screenshot both the `True` message (on press) and the `False` message (on release). A single one-shot `True` with nothing on release does not satisfy this task — the state machine in Step 6 needs to know when the estop clears, not just when it triggered.
 
 ---
 
@@ -842,9 +898,9 @@ A few natural extensions if you want to keep pushing:
 ## Tasks
 
 1. `sounddevice.query_devices()` output with I2S microphone identified (Step 1).
-2. ESP32 serial output showing touch pad press/release packet format (Step 2).
+2. GPIO touch pad output showing a pad's state changing between touched and not-touched, with pin-to-pad mapping confirmed (Step 2).
 3. `/voice_command` receiving a message on keyword detection (Step 3).
-4. `/touch_estop` publishing `True` on pad press (Step 4).
+4. `/touch_estop` publishing both `True` on press and `False` on release (Step 4).
 5. `/object_inventory` with at least two distinct object classes and positions (Step 5).
 6. Full system run: 60+ seconds of exploration, 3+ objects, voice stop, manifest (Step 7).
 7. Touch estop demo: halt confirmed within 1 second, log showing STOPPED transition (Step 7).
