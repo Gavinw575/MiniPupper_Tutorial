@@ -19,15 +19,11 @@
 - [Nav2 Simple Commander API](https://docs.nav2.org/commander_api/index.html)
 - [sounddevice documentation](https://python-sounddevice.readthedocs.io/)
 - [RPi.GPIO documentation](https://sourceforge.net/p/raspberry-gpio-python/wiki/BasicUsage/)
-- Week 7 Lab — Cartographer & Map Save/Load
-- Week 8 Lab — Nav2, AMCL, Costmaps & Waypoint Following
-- Week 9 Lab — OAK-D Lite Camera & YOLOv8 Inference
-
 ---
 
 ## Background
 
-Now we want the robot to walk into a small room or a little setup of boxes, build a map, detect and locate objects in that space, respond to spoken commands, and use the touch sensor on the back to physically stop it at any time. 
+We want the robot to walk into a small room or a little setup of boxes, build a map, detect and locate objects in that space, respond to spoken commands, and use the touch sensor on the back to physically stop it at any time. 
 
 ### The full system
 
@@ -47,10 +43,7 @@ The state machine that connects them lives in `explorer_node`. It listens to `/o
 
 ### The touch pad
 
-!!! warning "This isn't what you'd guess from the ESP32's other roles"
-    The ESP32 handles servo commands and battery telemetry over its own internal protocol so youd thing that the touch pads go through the same path. They don't. The capacitive touch pads are wired directly to the Raspberry Pi CM4's GPIO pin, bypassing the ESP32 entirely.
-
-The Mini Pupper's capacitive touch pad is wired straight to CM4 GPIO, active-low. The BSP's own demo folder (`mini_pupper_bsp/demos/touch_test.py`) reads them the same way. Your `touch_node` polls these pins directly and republishes the combined state as a standard `std_msgs/Bool` on `/touch_estop`.
+The Mini Pupper's capacitive touch pad is wired to CM4 GPIO, active-low. The BSP's own demo folder (`mini_pupper_bsp/demos/touch_test.py`) reads them the same way. Your `touch_node` polls these pins directly and republishes the combined state as a standard `std_msgs/Bool` on `/touch_estop`.
 
 BCM pin numbers:
 
@@ -60,8 +53,6 @@ BCM pin numbers:
 | left | 3 |
 | right | 16 |
 | back | 2 |
-
-If your board's touch pads don't respond on these exact pins, check `mini_pupper_bsp/demos/touch_test.py` on your own unit — pin assignments have occasionally shifted between hardware revisions.
 
 ### Object position pipeline
 
@@ -74,7 +65,7 @@ camera_optical_frame -> base_link -> odom -> map
 `tf2_ros` handles this. Look up the transform from `camera_optical_frame` to `map` at the time of detection, and apply it to the XYZ point from the depth pipeline.
 
 !!! note "Deduplication"
-    The same chair will be detected many times as the robot walks past it. A simple rule — if an object of the same class already exists in the inventory within 0.5 m of this detection, skip it. 
+    The same chair will be detected many times as the robot walks past it. A simple rule, if an object of the same class already exists in the inventory within 0.5 m of this detection, skip it. 
 
 ---
 
@@ -98,7 +89,7 @@ Confirm the microphone device is visible:
 python3 -c "import sounddevice; print(sounddevice.query_devices())"
 ```
 
-You should see an ALSA device listed. Note the device index — you'll need it in `voice_node`.
+You should see an ALSA device listed. Note the device index, you'll need it in `voice_node`.
 
 !!! warning "No HDMI cable during audio use"
     The BSP README notes this explicitly: the ALSA audio device is headphone output 0 only when no HDMI cable is connected. HDMI reassigns the headphone index and the microphone may also be affected.
@@ -113,7 +104,7 @@ On the robot, run the BSP's own demo to confirm the pads respond and to see whic
 python3 ~/mini_pupper_bsp/demos/touch_test.py
 ```
 
-Touch each pad on the robot's body in turn and confirm the demo reports a state change. If you'd rather see the raw GPIO reads directly instead of running the demo script, a short one-off check works too:
+Touch each pad on the robot's body in turn and confirm the demo reports a state change. Finish the state section of the code below to see the raw GPIO reads directly instead of using the demo script.
 
 ```bash
 python3 -c "
@@ -126,7 +117,7 @@ for p in pins.values():
 print('Touch pads now — Ctrl+C to stop')
 try:
     while True:
-        state = {name: GPIO.input(pin) == GPIO.LOW for name, pin in pins.items()}
+        state = # Your code
         print(state)
         time.sleep(0.2)
 except KeyboardInterrupt:
@@ -134,7 +125,8 @@ except KeyboardInterrupt:
 "
 ```
 
-**Task 2:** Paste the output showing a pad's state changing between touched and not touched.
+**Task 2:** Create a python script that reads the GPIO pins directely instead of just running the demo. Paste the output showing a pad's state changing between touched and not-touched as well as your code.
+
 ---
 
 ## Building the Voice Node
@@ -233,7 +225,7 @@ class VoiceNode(Node):
             #
             # If AcceptWaveform returns False, a partial result is available.
             # You can optionally check self.recognizer.PartialResult() here
-            # for faster response, but it's not required.
+            # for faster response.
 
             # Your code
 
@@ -270,7 +262,7 @@ ros2 run mini_pupper_labs voice_node &
 ros2 topic echo /voice_command
 ```
 
-**Task 3:** Screenshot `/voice_command` receiving a message when you say a keyword.
+**Task 3:** Screenshot/record `/voice_command` receiving a message when you say a keyword.
 
 ---
 
@@ -306,7 +298,7 @@ from std_msgs.msg import Bool
 # Your code
 
 # BCM pin numbers for each touch pad, confirmed in Step 2.
-# Adjust these if your unit's pin mapping differs.
+# Change these if you find your pin numbers different.
 PINS = {
     'front': 6,
     'left': 3,
@@ -335,16 +327,16 @@ class TouchNode(Node):
         self.get_logger().info('TouchNode listening on GPIO pins ' + str(PINS))
 
     def _poll_gpio(self):
-        # Task: check whether ANY pad is currently touched. Pads are
+        # Task: check whether any pad is currently touched. Pads are
         # active-low, so GPIO.input(pin) == GPIO.LOW means touched.
         # Use any(...) across all pins in PINS.
         #
         # Then: if this touched/not-touched state has CHANGED since the
         # last poll (compare against self._was_touched), publish a Bool
         # with the new state and update self._was_touched. Publish on
-        # BOTH transitions — press AND release — not just press. This
-        # matters: Task 4 needs to see an actual True -> False transition
-        # on the topic, not a one-shot event.
+        # both transitions — press and release. This
+        # matters: Task 4 needs to see a True -> False transition
+        # on the topic.
 
         # Your code
         pass
@@ -376,7 +368,7 @@ Register in `setup.py`:
 'touch_node = mini_pupper_labs.touch_node:main',
 ```
 
-**Task 4:** Run `touch_node`, then `ros2 topic echo /touch_estop` in another terminal. Press a pad and then release it — screenshot both the `True` message (on press) and the `False` message (on release). A single one-shot `True` with nothing on release does not satisfy this task — the state machine in Step 6 needs to know when the estop clears, not just when it triggered.
+**Task 4:** Run `touch_node`, then `ros2 topic echo /touch_estop` in another terminal. Press a pad and then release it — screenshot both the `True` message (on press) and the `False` message (on release).
 
 ---
 
@@ -422,10 +414,10 @@ from geometry_msgs.msg import PointStamped
 import tf2_geometry_msgs  # noqa: F401 — registers the transform type
 
 
-# Only track COCO classes the robot is likely to encounter indoors.
+# Only track classes the robot is likely to encounter indoors.
 TRACKED_CLASSES = {
     'person', 'chair', 'bottle', 'cup', 'laptop',
-    'cell phone', 'book', 'backpack', 'tv', 'couch',
+    'cell phone', 'book', 'backpack', 'tv', 'couch', 'box',
 }
 
 # Minimum confidence to log a detection.
@@ -494,9 +486,7 @@ class DetectorNode(Node):
                 # self.latest_depth is a 32FC1 depth image (meters as float32).
                 # Convert it with self.bridge.imgmsg_to_cv2(self.latest_depth, '32FC1')
                 # then index into it at [cy_px, cx_px].
-                # Skip this detection if latest_depth is None or the depth value
-                # is 0.0 or nan (the OAK-D Lite returns 0 for unmeasurable pixels).
-
+ 
                 depth_m = # Your code
                 if depth_m is None:
                     continue
@@ -801,18 +791,16 @@ class ExplorerNode(Node):
         # The BSP installs `mpg321` and `sounddevice` / `amixer` on the robot.
         # The simplest approach: use subprocess.run to call amixer to set volume,
         # then play a .wav file with `aplay`. You can generate a 0.5s sine wave
-        # .wav file in advance and place it at ~/chirp.wav, or use any system sound.
+        # .wav file in advance and place it at ~/chirp.wav.
         #
         # Alternatively: generate the chirp in Python with sounddevice and numpy,
         # write it to /tmp/chirp.wav with soundfile, then play it.
         #
         # Note: this runs on the PC, so you'll need to SSH-invoke a command on
-        # the robot to play from its speaker, OR move the chirp play logic into
+        # the robot to play from its speaker, or move the chirp play logic into
         # voice_node.py which already runs on the robot and can subscribe to
         # /inventory_update to trigger playback.
-        #
-        # Document your approach in your writeup.
-
+        
         # Your code
 
 
@@ -842,7 +830,7 @@ Register in `setup.py`:
 
 Start everything in order. Use separate terminals.
 
-**Terminal 1 — Robot bringup (on robot via SSH):**
+**Terminal 1 — Robot bringup (on robot):**
 
 ```bash
 source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
@@ -863,7 +851,7 @@ source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
 ros2 launch mini_pupper_navigation navigation_smacplanner.launch.py
 ```
 
-**Terminal 4 — Voice and touch nodes (on robot via SSH):**
+**Terminal 4 — Voice and touch nodes (on robot):**
 
 ```bash
 source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
@@ -877,9 +865,9 @@ source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
 ros2 run mini_pupper_labs detector_node & ros2 run mini_pupper_labs explorer_node
 ```
 
-**Task 6:** Run the full system. Let the robot explore the room and detect at least 3 distinct objects (you can place them). Then say "stop" to trigger the voice command. Screenshot the inventory manifest printed in the explorer node's log output.
+**Task 6:** Run the full system. Let the robot explore the room and detect at least 3 distinct objects (you can place them). Then say "stop" to trigger the voice command. Screenshot the inventory manifest printed in the explorer node's log output and record the robot walking around.
 
-**Task 7:** Trigger the touch estop mid-run (during active navigation). Confirm the robot halts after the touch event. Screenshot the `/touch_estop` topic and the explorer node log showing the transition to STOPPED.
+**Task 7:** Trigger the touch estop mid-run. Confirm the robot halts after the touch event. Screenshot the `/touch_estop` topic and the explorer node log showing the transition to STOPPED.
 
 ---
 
