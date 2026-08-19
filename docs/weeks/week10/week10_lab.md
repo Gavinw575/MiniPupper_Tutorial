@@ -38,7 +38,7 @@ Five ROS2 nodes will need to run together, some of them can be reused or changed
 | `detector_node` | PC | Runs YOLOv8, gets depth from OAK-D Lite, transforms to map frame, logs inventory (new) |
 | `voice_node` | Robot | Records from the onboard mic, runs vosk, publishes keyword events (new) |
 | `touch_node` | Robot | Polls the touch pads directly via GPIO, publishes a `Bool` estop signal (new) |
-| `lcd_camera_node` | Robot | Mirrors `/camera/image_raw` live to the front LCD (new) |
+| `oak_detection_publisher` | Robot | On-device YOLO + person tracking + object counting, drawn directly to the LCD (extended from Week 9, no ROS topics) |
 
 The state machine that connects them lives in `explorer_node`. It listens to `/object_inventory` (from `detector_node`), `/voice_command` (from `voice_node`), and `/touch_estop` (from `touch_node`), and makes three decisions: keep exploring, stop cleanly, or emergency stop.
 
@@ -376,136 +376,147 @@ Register in `setup.py`:
 
 ---
 
-## Building the LCD Camera Node
+## Live Camera View + Object Counting (On-Device)
 
-### Step 5 — Write `lcd_camera_node.py`
+### Step 5 — Extend `oak_detection_publisher.py`
 
-Create the file on the robot:
+!!! note "Why this isn't a ROS image topic"
+    The first version of this step tried to have the robot publish
+    `/camera/image_raw` over ROS so a separate subscriber node could mirror
+    it to the LCD. That approach is not used here — nothing in this
+    workspace runs a ROS-facing OAK-D driver, and setting one up just to
+    hand frames to a second local process is unnecessary complexity for
+    "show what the camera sees." Instead, this extends
+    `oak_detection_publisher.py` from Week 9 — which already opens the
+    OAK-D directly and draws to the LCD — to also detect and count a wider
+    set of object classes, entirely on-device. No new ROS topics.
+
+You should already have `~/oak_detection_publisher.py` from Week 9. It runs
+YOLO + person tracking on the OAK-D's own VPU and draws the annotated
+preview straight to the LCD. Right now it only tracks and draws boxes for
+`person` (class 0) — everything else the model sees is discarded. You're
+going to tap the detector's raw output (before the person-only tracker
+filters it) so you can draw and count *any* object class, without touching
+the existing person-tracking behavior at all.
+
+Open the file:
 
 ```bash
-nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/lcd_camera_node.py
+nano ~/oak_detection_publisher.py
 ```
 
+Add this near the top, alongside `PERSON_CLASS_ID`:
+
 ```python
-#!/usr/bin/env python3
-"""
-lcd_camera_node.py
+# Classes worth drawing/counting beyond the tracked person. Kept in sync
+# with detector_node.py's TRACKED_CLASSES later in this lab, so "what the
+# robot can recognize" means the same thing across the course.
+COUNT_CLASSES = {
+    'person', 'chair', 'bottle', 'cup', 'laptop',
+    'cell phone', 'book', 'backpack', 'tv', 'couch', 'box',
+}
 
-Subscribes to /camera/image_raw, which the OAK-D Lite driver already
-publishes locally on the robot, and mirrors a live resized feed to the
-front ST7789 LCD panel.
+# A new count has to hold steady for this many LCD ticks before it's
+# logged. Without this, borderline detections flicker frame to frame
+# (e.g. a second chair toggling in and out) and spam the log — the raw
+# per-frame detector has no temporal smoothing the way the person tracker
+# does. The on-screen overlay stays live and un-debounced; only the log
+# line waits for a stable count.
+COUNT_LOG_STABLE_TICKS = 5
+```
 
-Robot-only — no PC or network dependency. Works independently of
-detector_node, explorer_node, voice_node, or touch_node.
+In `__init__`, right after the existing `self.detectionNetwork.out.link(self.objectTracker.inputDetections)` line, add a second consumer on the same output:
 
-Runs on the robot.
-"""
+```python
+# Task: DepthAI outputs support multiple consumers. Create a second
+# output queue directly off self.detectionNetwork.out (NOT off the
+# tracker) so you get every class, every frame, independent of the
+# person-only tracker above. maxSize=1, blocking=False, same as the
+# other queues in this file.
 
-import time
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import Image
-from cv_bridge import CvBridge
-import cv2
+self.raw_detections_queue = # Your code
+```
 
-from MangDang.LCD.ST7789 import ST7789
+Also add two new instance variables near where `self._latest_tracklets` is set up:
 
-# LCD panel resolution.
-LCD_W, LCD_H = 320, 240
+```python
+self._last_logged_counts = {}
+self._stable_count_streak = 0
+```
 
-# Cap how often we actually push a frame to the display. The camera may
-# publish faster than this — extra frames are simply dropped rather than
-# queued, since we only ever care about the most recent one. This keeps
-# CPU and SPI bus load bounded on the CM4, which is also running vosk
-# and GPIO polling at the same time.
-DISPLAY_INTERVAL_SEC = 0.1  # ~10 fps
+Now add a helper method to the class:
 
+```python
+def _read_counted_detections(self):
+    """
+    Pull the latest raw (untracked, all-class) detections and filter to
+    COUNT_CLASSES. Returns (boxes, counts):
+      boxes  — list of (class_name, confidence, x1, y1, x2, y2) in
+               normalized 0-1 coordinates
+      counts — {class_name: count} dict
+    """
+    boxes = []
+    counts = {}
+    try:
+        dets = self.raw_detections_queue.tryGet()
+    except Exception as e:
+        self.get_logger().warn(f"Detection read error: {e}", throttle_duration_sec=5.0)
+        return boxes, counts
 
-class LcdCameraNode(Node):
+    if dets is None:
+        return boxes, counts
 
-    def __init__(self):
-        super().__init__('lcd_camera_node')
+    # Task: for each detection in dets.detections, look up its class name
+    # via self.labelMap[det.label]. Skip it if that name isn't in
+    # COUNT_CLASSES. Otherwise append (class_name, det.confidence,
+    # det.xmin, det.ymin, det.xmax, det.ymax) to boxes, and increment
+    # counts[class_name] (starting from 0 if it's not in the dict yet).
 
-        self.bridge = CvBridge()
+    # Your code
 
-        # Task: Create an ST7789() instance and store it as self.lcd.
-        # Hint: ST7789()
+    return boxes, counts
+```
 
-        self.lcd = # Your code
+Finally, inside `publish_lcd()`, right after the existing person-tracklet drawing loop (the one that draws green boxes), add:
 
-        self._last_display_time = 0.0
+```python
+        boxes, counts = self._read_counted_detections()
+        for class_name, conf, nx1, ny1, nx2, ny2 in boxes:
+            x1, y1, x2, y2 = int(nx1 * w), int(ny1 * h), int(nx2 * w), int(ny2 * h)
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 1)
+            cv2.putText(
+                frame, class_name,
+                (x1, max(y1 - 4, 10)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 255), 1
+            )
 
-        # queue depth of 1 — we only want the newest frame, not a backlog.
-        self.sub_image = self.create_subscription(
-            Image, '/camera/image_raw', self._on_frame, 1
+        summary = " ".join(f"{name}:{n}" for name, n in sorted(counts.items())) if counts else "nothing in view"
+        cv2.putText(
+            frame, summary, (4, 14),
+            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1
         )
 
-        self.get_logger().info('LcdCameraNode ready — mirroring camera to LCD')
-
-    def _on_frame(self, msg: Image):
-        now = time.monotonic()
-        if now - self._last_display_time < DISPLAY_INTERVAL_SEC:
-            return  # drop this frame, too soon since the last display push
-        self._last_display_time = now
-
-        # Task: Convert msg to a BGR OpenCV image.
-        # Hint: self.bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-
-        frame = # Your code
-
-        # Task: Resize frame to (LCD_W, LCD_H) with cv2.resize().
-
-        frame_resized = # Your code
-
-        # Task: Convert BGR -> RGB. OpenCV gives BGR by default, but the
-        # ST7789 driver expects RGB.
-        # Hint: cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-
-        frame_rgb = # Your code
-
-        # Task: Push frame_rgb to the display.
-        # Hint: self.lcd.display(frame_rgb)
+        # Task: implement the debounce. If `counts` differs from
+        # self._last_logged_counts, DON'T log immediately — instead
+        # increment self._stable_count_streak, and only log + update
+        # self._last_logged_counts once the streak reaches
+        # COUNT_LOG_STABLE_TICKS. If counts matches self._last_logged_counts,
+        # reset the streak to 0 (nothing new to confirm).
 
         # Your code
-
-
-def main(args=None):
-    rclpy.init(args=args)
-    node = LcdCameraNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
-
-
-if __name__ == '__main__':
-    main()
 ```
 
-!!! warning "Don't run `display_interface` at the same time"
-    The stock `display_interface` service and `lcd_camera_node` both own the
-    ST7789 hardware directly. Running both at once will make neither display
-    correctly. Stop `display_interface` before running this node:
-    ```bash
-    sudo systemctl stop display_interface
-    ```
-
-Register in `setup.py`:
-
-```python
-'lcd_camera_node = mini_pupper_labs.lcd_camera_node:main',
-```
-
-Build and test standalone before folding it into the full launch:
+Run it directly — no `colcon build`, this isn't a registered package node:
 
 ```bash
-colcon build --packages-select mini_pupper_labs --symlink-install
-source install/setup.bash
-ros2 run mini_pupper_labs lcd_camera_node
+python3 ~/oak_detection_publisher.py
 ```
 
-**Task 5:** Take a photo of the robot's LCD showing the live mirrored camera
-feed — point the camera at something recognizable so it's clear the image is
-live, not a static test pattern.
+**Task 5:** Take a photo of the robot's LCD showing: the existing green
+person-tracking box still working, at least one yellow object box with a
+correct class label, and the count summary text. Then paste ~15 seconds of
+the node's log output showing count lines appearing only on real changes,
+not every frame.
 
 ---
 
@@ -514,6 +525,9 @@ live, not a static test pattern.
 ### Step 6 — Write `detector_node.py`
 
 This node runs on the PC. It builds on the Week 9 YOLO detector but adds depth-to-map-frame transformation and inventory tracking. Need to install this system package as well.
+
+!!! warning "Camera and depth data source not yet confirmed working"
+    This node subscribes to `/camera/image_raw` and `/stereo/depth`, but nothing in this workspace has been confirmed to publish either one. A related bug (Step 5's original design subscribing to `/camera/image_raw` with zero publishers) was found and fixed for the LCD case by moving to an on-device approach that avoids ROS topics entirely — but `detector_node` fundamentally needs data over the network to do map-frame position tracking, so that workaround doesn't apply here. Before trusting Task 6's output, confirm with `ros2 topic info /camera/image_raw --verbose` and `ros2 topic info /stereo/depth --verbose` that a publisher actually exists. If not, this needs its own fix — likely a dedicated camera+depth driver node on the robot, which also has to coordinate with `oak_detection_publisher` since only one process can hold the OAK-D device at a time. Not yet resolved as of this version of the lab.
 
 ```bash
 pip install ultralytics --break-system-packages
@@ -996,11 +1010,11 @@ ros2 launch mini_pupper_navigation navigation_smacplanner.launch.py
 
 ```bash
 source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
-ros2 run mini_pupper_labs voice_node & ros2 run mini_pupper_labs touch_node & ros2 run mini_pupper_labs lcd_camera_node
+ros2 run mini_pupper_labs voice_node & ros2 run mini_pupper_labs touch_node
 ```
 
-!!! warning "Stop `display_interface` first"
-    `lcd_camera_node` and the stock `display_interface` service both own the ST7789 hardware directly. Run `sudo systemctl stop display_interface` before this terminal, or the screen won't render correctly.
+!!! note "`oak_detection_publisher` isn't part of this launch"
+    Step 5's node exclusively owns the OAK-D over USB, which `detector_node` (Terminal 5) also needs once its camera/depth data source is resolved. The two can't run at once as currently designed. `oak_detection_publisher` is a standalone checkpoint for Task 5, not part of the integrated full-system run — see the warning under Step 6.
 
 **Terminal 5 — Detector and explorer (on PC):**
 
@@ -1033,9 +1047,10 @@ A few natural extensions if you want to keep pushing:
 2. GPIO touch pad output showing a pad's state changing between touched and not-touched, with pin-to-pad mapping confirmed (Step 2).
 3. `/voice_command` receiving a message on keyword detection (Step 3).
 4. `/touch_estop` publishing both `True` on press and `False` on release (Step 4).
-5. Photo of the robot's LCD showing the live mirrored camera feed (Step 5).
+5. Photo of the LCD showing person tracking + object boxes + count overlay, plus ~15s of log output showing debounced count changes (Step 5).
 6. `/object_inventory` with at least two distinct object classes and positions (Step 6).
 7. Full system run: 60+ seconds of exploration, 3+ objects, voice stop, manifest (Step 8).
 8. Touch estop demo: halt confirmed within 1 second, log showing STOPPED transition (Step 8).
 
 ---
+
