@@ -38,7 +38,6 @@ Five ROS2 nodes will need to run together, some of them can be reused or changed
 | `detector_node` | PC | Runs YOLOv8, gets depth from OAK-D Lite, transforms to map frame, logs inventory (new) |
 | `voice_node` | Robot | Records from the onboard mic, runs vosk, publishes keyword events (new) |
 | `touch_node` | Robot | Polls the touch pads directly via GPIO, publishes a `Bool` estop signal (new) |
-| `lcd_camera_node` | Robot | Mirrors `/camera/image_raw` live to the front LCD (new) |
 
 The state machine that connects them lives in `explorer_node`. It listens to `/object_inventory` (from `detector_node`), `/voice_command` (from `voice_node`), and `/touch_estop` (from `touch_node`), and makes three decisions: keep exploring, stop cleanly, or emergency stop.
 
@@ -171,7 +170,7 @@ SAMPLE_RATE = 16000
 BLOCK_SIZE = 4000
 # Set this to the device index from Task 1 if auto-detection fails.
 DEVICE_INDEX = None   # None = sounddevice default input
-DEVICE_CHANNELS = 2
+DEVICE_CHANELLS = 2
 
 
 class VoiceNode(Node):
@@ -503,7 +502,7 @@ source install/setup.bash
 ros2 run mini_pupper_labs lcd_camera_node
 ```
 
-**Task 5:** Take a photo of the robot's LCD showing the live mirrored camera
+**Task 8:** Take a photo of the robot's LCD showing the live mirrored camera
 feed — point the camera at something recognizable so it's clear the image is
 live, not a static test pattern.
 
@@ -516,7 +515,7 @@ live, not a static test pattern.
 This node runs on the PC. It builds on the Week 9 YOLO detector but adds depth-to-map-frame transformation and inventory tracking. Need to install this system package as well.
 
 ```bash
-pip install ultralytics --break-system-packages
+pip install ultralytics
 ```
 
 ```bash
@@ -717,7 +716,7 @@ Register in `setup.py`:
 'detector_node = mini_pupper_labs.detector_node:main',
 ```
 
-**Task 6:** Screenshot `/object_inventory` publishing a non-empty JSON list with at least two different object classes detected at different positions.
+**Task 5:** Screenshot `/object_inventory` publishing a non-empty JSON list with at least two different object classes detected at different positions.
 
 ---
 
@@ -996,11 +995,8 @@ ros2 launch mini_pupper_navigation navigation_smacplanner.launch.py
 
 ```bash
 source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
-ros2 run mini_pupper_labs voice_node & ros2 run mini_pupper_labs touch_node & ros2 run mini_pupper_labs lcd_camera_node
+ros2 run mini_pupper_labs voice_node & ros2 run mini_pupper_labs touch_node
 ```
-
-!!! warning "Stop `display_interface` first"
-    `lcd_camera_node` and the stock `display_interface` service both own the ST7789 hardware directly. Run `sudo systemctl stop display_interface` before this terminal, or the screen won't render correctly.
 
 **Terminal 5 — Detector and explorer (on PC):**
 
@@ -1009,9 +1005,9 @@ source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
 ros2 run mini_pupper_labs detector_node & ros2 run mini_pupper_labs explorer_node
 ```
 
-**Task 7:** Run the full system. Let the robot explore the room and detect at least 3 distinct objects (you can place them). Then say "stop" to trigger the voice command. Screenshot the inventory manifest printed in the explorer node's log output and record the robot walking around.
+**Task 6:** Run the full system. Let the robot explore the room and detect at least 3 distinct objects (you can place them). Then say "stop" to trigger the voice command. Screenshot the inventory manifest printed in the explorer node's log output and record the robot walking around.
 
-**Task 8:** Trigger the touch estop mid-run. Confirm the robot halts after the touch event. Screenshot the `/touch_estop` topic and the explorer node log showing the transition to STOPPED.
+**Task 7:** Trigger the touch estop mid-run. Confirm the robot halts after the touch event. Screenshot the `/touch_estop` topic and the explorer node log showing the transition to STOPPED.
 
 ---
 
@@ -1033,9 +1029,8 @@ A few natural extensions if you want to keep pushing:
 2. GPIO touch pad output showing a pad's state changing between touched and not-touched, with pin-to-pad mapping confirmed (Step 2).
 3. `/voice_command` receiving a message on keyword detection (Step 3).
 4. `/touch_estop` publishing both `True` on press and `False` on release (Step 4).
-5. Photo of the robot's LCD showing the live mirrored camera feed (Step 5).
-6. `/object_inventory` with at least two distinct object classes and positions (Step 6).
-7. Full system run: 60+ seconds of exploration, 3+ objects, voice stop, manifest (Step 8).
-8. Touch estop demo: halt confirmed within 1 second, log showing STOPPED transition (Step 8).
+5. `/object_inventory` with at least two distinct object classes and positions (Step 5).
+6. Full system run: 60+ seconds of exploration, 3+ objects, voice stop, manifest (Step 7).
+7. Touch estop demo: halt confirmed within 1 second, log showing STOPPED transition (Step 7).
 
 ---
