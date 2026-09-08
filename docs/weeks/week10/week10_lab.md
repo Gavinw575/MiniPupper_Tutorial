@@ -1196,8 +1196,23 @@ source install/setup.bash
 Bring up, in order:
  
 1. **Bringup** on the robot.
+
+```
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+ros2 launch mini_pupper_bringup bringup.launch.py
+```
+
 2. **SLAM** — gives you `/map` and the occupancy grid.
+```
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+ros2 launch mini_pupper_slam slam.launch.py
+```
 3. **Nav2** — `explorer_node` will hang at startup until this is active.
+```
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+ros2 launch mini_pupper_navigation navigation_smacplanner.launch.py
+
+```
 Then run `explorer_node` on the PC:
  
 ```bash
@@ -1206,7 +1221,7 @@ ros2 run mini_pupper_labs explorer_node
  
 Watch the log for `New frontier goal: (x, y)` lines and confirm the robot
 actually starts moving toward them — that's the state machine transitioning
-IDLE → EXPLORE and the frontier-picking loop working, independent of
+IDLE -> EXPLORE and the frontier-picking loop working, independent of
 whether detection or voice/touch are wired in yet.
  
 **Task 7:** With bringup, SLAM, and Nav2 running, start `explorer_node` and
