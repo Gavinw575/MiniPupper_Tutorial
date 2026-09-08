@@ -687,7 +687,7 @@ Register in `setup.py`:
 'oak_camera_node = mini_pupper_labs.oak_camera_node:main',
 ```
 
-Build (`--parallel-workers 1 --executor sequential` on this CM4), then test in isolation before moving to `detector_node.py`:
+Build, then test before moving to `detector_node.py`:
 
 ```bash
 colcon build --packages-select mini_pupper_labs --symlink-install
@@ -702,18 +702,14 @@ ros2 topic hz /camera/image_raw
 ros2 topic hz /stereo/depth
 ```
 
-!!! note "Depth accuracy near minimum range"
-    Stereo depth is least accurate close to the camera's minimum sensing
-    range. A hand measured at ~10in (0.254m) read back around 0.22–0.23m —
-    a few cm off. Expect better accuracy at the 1–3m range Step 7's
-    exploration will mostly operate at; this isn't a calibration bug.
+
 
 ### Step 6b — Write `detector_node.py`
 
 This node runs on the PC. It builds on the Week 9 YOLO detector but adds depth-to-map-frame transformation and inventory tracking. Need to install this system package as well.
 
 ```bash
-pip install ultralytics --break-system-packages
+pip install ultralytics
 ```
 
 ```bash
@@ -913,6 +909,34 @@ Register in `setup.py`:
 ```
 'detector_node = mini_pupper_labs.detector_node:main',
 ```
+
+Build it:
+ 
+```bash
+colcon build --packages-select mini_pupper_labs --symlink-install
+source install/setup.bash
+```
+ 
+`detector_node` needs the TF chain
+resolving all the way to `map`, plus real camera/depth data. Before running
+it, bring up, in order:
+ 
+1. **Bringup** on the robot — gives you `base_link`/`odom` TF and `camera_link`.
+2. **SLAM** — gives you the `map` frame. Without this, the TF lookup to `map`
+   fails silently and `/object_inventory` just stays empty with no error
+   telling you why.
+3. **`oak_camera_node`** (Step 6a) on the robot.
+
+Then run `detector_node` on the PC:
+ 
+```bash
+ros2 run mini_pupper_labs detector_node
+```
+ 
+This is a scaled-down preview of Step 8's full launch — Nav2 and
+`explorer_node` aren't needed just to confirm detection is working.
+ 
+**Task 6:** Screenshot `/object_inventory` publishing a non-empty JSON list with at least two different object classes detected at different positions.
 
 **Task 6:** Screenshot `/object_inventory` publishing a non-empty JSON list with at least two different object classes detected at different positions.
 
