@@ -380,24 +380,12 @@ Register in `setup.py`:
 
 ### Step 5 — Extend `oak_detection_publisher.py`
 
-!!! note "Why this isn't a ROS image topic"
-    The first version of this step tried to have the robot publish
-    `/camera/image_raw` over ROS so a separate subscriber node could mirror
-    it to the LCD. That approach is not used here — nothing in this
-    workspace runs a ROS-facing OAK-D driver, and setting one up just to
-    hand frames to a second local process is unnecessary complexity for
-    "show what the camera sees." Instead, this extends
-    `oak_detection_publisher.py` from Week 9 — which already opens the
-    OAK-D directly and draws to the LCD — to also detect and count a wider
-    set of object classes, entirely on-device. No new ROS topics.
-
 You should already have `~/oak_detection_publisher.py` from Week 9. It runs
 YOLO + person tracking on the OAK-D's own VPU and draws the annotated
 preview straight to the LCD. Right now it only tracks and draws boxes for
 `person` (class 0) — everything else the model sees is discarded. You're
-going to tap the detector's raw output (before the person-only tracker
-filters it) so you can draw and count *any* object class, without touching
-the existing person-tracking behavior at all.
+going to tap the detector's output so you can draw and count any object class, without touching
+the existing behavior at all.
 
 Open the file:
 
@@ -506,8 +494,8 @@ Finally, inside `publish_lcd()`, right after the existing person-tracklet drawin
         # Your code
 ```
 
-Run it directly — no `colcon build`, this isn't a registered package node:
-
+Run it directly
+ 
 ```bash
 python3 ~/oak_detection_publisher.py
 ```
@@ -515,8 +503,7 @@ python3 ~/oak_detection_publisher.py
 **Task 5:** Take a photo of the robot's LCD showing: the existing green
 person-tracking box still working, at least one yellow object box with a
 correct class label, and the count summary text. Then paste ~15 seconds of
-the node's log output showing count lines appearing only on real changes,
-not every frame.
+the node's log output showing count lines appearing.
 
 ---
 
