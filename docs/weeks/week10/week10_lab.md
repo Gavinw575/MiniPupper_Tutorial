@@ -922,22 +922,24 @@ resolving all the way to `map`, plus real camera/depth data. Before running
 it, bring up, in order:
  
 1. **Bringup** on the robot — gives you `base_link`/`odom` TF and `camera_link`.
+```
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+ros2 launch mini_pupper_bringup bringup.launch.py
+```
 2. **SLAM** — gives you the `map` frame. Without this, the TF lookup to `map`
    fails silently and `/object_inventory` just stays empty with no error
    telling you why.
+```
+source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
+ros2 launch mini_pupper_slam slam.launch.py
+```
 3. **`oak_camera_node`** (Step 6a) on the robot.
 
 Then run `detector_node` on the PC:
  
 ```bash
 ros2 run mini_pupper_labs detector_node
-```
- 
-This is a scaled-down preview of Step 8's full launch — Nav2 and
-`explorer_node` aren't needed just to confirm detection is working.
- 
-**Task 6:** Screenshot `/object_inventory` publishing a non-empty JSON list with at least two different object classes detected at different positions.
-
+``` 
 **Task 6:** Screenshot `/object_inventory` publishing a non-empty JSON list with at least two different object classes detected at different positions.
 
 ---
@@ -1184,6 +1186,33 @@ Register in `setup.py`:
 'explorer_node = mini_pupper_labs.explorer_node:main',
 ```
 
+Build it:
+ 
+```bash
+colcon build --packages-select mini_pupper_labs --symlink-install
+source install/setup.bash
+```
+ 
+Bring up, in order:
+ 
+1. **Bringup** on the robot.
+2. **SLAM** — gives you `/map` and the occupancy grid.
+3. **Nav2** — `explorer_node` will hang at startup until this is active.
+Then run `explorer_node` on the PC:
+ 
+```bash
+ros2 run mini_pupper_labs explorer_node
+```
+ 
+Watch the log for `New frontier goal: (x, y)` lines and confirm the robot
+actually starts moving toward them — that's the state machine transitioning
+IDLE → EXPLORE and the frontier-picking loop working, independent of
+whether detection or voice/touch are wired in yet.
+ 
+**Task 7:** With bringup, SLAM, and Nav2 running, start `explorer_node` and
+confirm at least 2 distinct frontier goals get sent (screenshot the log
+lines) and the robot visibly moves toward them.
+
 ---
 
 ## Putting It All Together
@@ -1230,21 +1259,9 @@ source /opt/ros/humble/setup.bash && source ~/ros2_ws/install/setup.bash
 ros2 run mini_pupper_labs detector_node & ros2 run mini_pupper_labs explorer_node
 ```
 
-**Task 7:** Run the full system. Let the robot explore the room and detect at least 3 distinct objects (you can place them). Then say "stop" to trigger the voice command. Screenshot the inventory manifest printed in the explorer node's log output and record the robot walking around.
+**Task 7:** Run the full system. Let the robot explore the room and detect at least 3 distinct objects (you can place them). Screenshot the inventory manifest printed in the explorer node's log output and record the robot walking around.
 
 **Task 8:** Trigger the touch estop mid-run. Confirm the robot halts after the touch event. Screenshot the `/touch_estop` topic and the explorer node log showing the transition to STOPPED.
-
----
-
-## Looking Ahead
-
-You've now built a complete autonomous robot system from scratch: hardware bringup, sensor fusion, SLAM, navigation, computer vision, speech recognition, and physical human-robot interaction. Each week's lab was one layer of this stack.
-
-A few natural extensions if you want to keep pushing:
-
-- **RL locomotion:** Swap the Stanford gait controller for the trained neural policy from the MJX Colab. The object inventory and exploration logic is completely independent of the locomotion layer — you'd only change how `cmd_vel` gets executed below the navigation stack.
-- **LCD live inventory:** Push the current object count and last-detected class to the ST7789 display so the robot's screen acts as a live status panel during the sweep.
-- **Speaker feedback on each new find:** Add a short bark or chirp (via `sounddevice` on the robot) every time `detector_node` publishes a new `/inventory_update` event, so you can hear the robot "finding" things without watching a terminal.
 
 ---
 
