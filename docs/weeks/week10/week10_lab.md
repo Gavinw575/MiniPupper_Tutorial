@@ -65,8 +65,7 @@ camera_optical_frame -> base_link -> odom -> map
 
 `tf2_ros` handles this. Look up the transform from `camera_optical_frame` to `map` at the time of detection, and apply it to the XYZ point from the depth pipeline.
 
-!!! note "Deduplication"
-    The same chair will be detected many times as the robot walks past it. A simple rule, if an object of the same class already exists in the inventory within 0.5 m of this detection, skip it. 
+The same chair will be detected many times as the robot walks past it. A simple rule, if an object of the same class already exists in the inventory within 0.5 m of this detection, skip it. 
 
 ---
 
@@ -91,9 +90,6 @@ python3 -c "import sounddevice; print(sounddevice.query_devices())"
 ```
 
 You should see an ALSA device listed. Note the device index, you'll need it in `voice_node`.
-
-!!! warning "No HDMI cable during audio use"
-    The BSP README notes this explicitly: the ALSA audio device is headphone output 0 only when no HDMI cable is connected. HDMI reassigns the headphone index and the microphone may also be affected.
 
 **Task 1:** Paste the `sounddevice.query_devices()` output from your robot and identify which device index corresponds to the ALSA microphone.
 
@@ -383,9 +379,7 @@ Register in `setup.py`:
 You should already have `~/oak_detection_publisher.py` from Week 9. It runs
 YOLO + person tracking on the OAK-D's own VPU and draws the annotated
 preview straight to the LCD. Right now it only tracks and draws boxes for
-`person` (class 0) — everything else the model sees is discarded. You're
-going to tap the detector's output so you can draw and count any object class, without touching
-the existing behavior at all.
+`person` (class 0).
 
 Open the file:
 
@@ -502,19 +496,221 @@ python3 ~/oak_detection_publisher.py
 
 **Task 5:** Take a photo of the robot's LCD showing: the existing green
 person-tracking box still working, at least one yellow object box with a
-correct class label, and the count summary text. Then paste ~15 seconds of
-the node's log output showing count lines appearing.
+correct class label, and the count summary text. Then paste some of the node's log output
+showing which objects are in view.
 
 ---
 
 ## Building the Detector Node
 
-### Step 6 — Write `detector_node.py`
+### Step 6a — Write `oak_camera_node.py` (robot-side)
+
+`detector_node.py` needs real camera and depth data over the network to do
+map-frame position tracking — `oak_detection_publisher.py` (Step 5)
+deliberately doesn't provide this, since it's an on-device-only node for a
+different purpose. This step builds the piece that actually does: a robot-side
+node that opens the OAK-D Lite directly and publishes what `detector_node.py`
+expects.
+
+!!! warning "depthai version matters — make it to 3.0.0"
+    depthai 3.7.1 and 3.9.0 crash this OAK-D Lite's mono cameras the instant
+    any mono/stereo stream starts its a firmware bug in those
+    releases. depthai 3.0.0 does not have this bug and is compatible with
+    `oak_detection_publisher.py`'s pipeline.
+    ```bash
+    pip3 install --user depthai==3.0.0
+    ```
+    
+!!! warning "Never run this at the same time as oak_detection_publisher.py"
+    The OAK-D is a single USB device — only one process can hold it. Confirm
+    `oak_detection_publisher.py` isn't running before starting this node.
+
+Create the file on the robot:
+
+```bash
+nano ~/ros2_ws/src/mini_pupper_labs/mini_pupper_labs/oak_camera_node.py
+```
+
+```python
+#!/usr/bin/env python3
+"""
+oak_camera_node.py
+
+Opens the OAK-D Lite directly via DepthAI and publishes RGB + depth over
+ROS2 so PC-side nodes (detector_node.py) can do map-frame position
+tracking. Exclusively owns the OAK-D USB device -- must not run at the
+same time as oak_detection_publisher.py.
+
+Publishes:
+  /camera/image_raw -- sensor_msgs/Image, bgr8
+  /stereo/depth      -- sensor_msgs/Image, 32FC1 (meters)
+
+Runs on the robot.
+"""
+
+import numpy as np
+import depthai as dai
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+import tf2_ros
+from geometry_msgs.msg import TransformStamped
+
+# Cap publish rate to bound CM4 CPU/network load -- this node runs
+# alongside voice_node and touch_node during the full system launch.
+PUBLISH_HZ = 10.0
+
+# Must match detector_node.py's hardcoded intrinsics/principal point
+# (FX=FY=457.3, CX=320, CY=240), which assume a 640x480 RGB frame with
+# depth pixel-registered to it 1:1.
+FRAME_SIZE = (640, 480)
+
+# Camera board sockets on the OAK-D Lite (CAM_A = IMX214 color,
+# CAM_B/CAM_C = OV7251 mono pair).
+RGB_SOCKET = dai.CameraBoardSocket.CAM_A
+LEFT_SOCKET = dai.CameraBoardSocket.CAM_B
+RIGHT_SOCKET = dai.CameraBoardSocket.CAM_C
+
+
+class OakCameraNode(Node):
+
+    def __init__(self):
+        super().__init__('oak_camera_node')
+
+        self.bridge = CvBridge()
+        self.pub_rgb = self.create_publisher(Image, '/camera/image_raw', 5)
+        self.pub_depth = self.create_publisher(Image, '/stereo/depth', 5)
+
+        # Images are stamped with frame_id 'camera_optical_frame', which
+        # detector_node.py's TF lookup expects to exist -- but it's not part
+        # of the robot's URDF, only 'camera_link' is (the physical mount
+        # frame, from robot_state_publisher). As the camera driver, publish
+        # the standard REP-103/104 static transform connecting them (same
+        # convention depthai-ros/realsense-ros use for
+        # <camera>_link -> <camera>_optical_frame).
+        self.static_tf_broadcaster = tf2_ros.StaticTransformBroadcaster(self)
+        self._publish_camera_optical_tf()
+
+        self.pipeline = dai.Pipeline()
+
+        colorCam = self.pipeline.create(dai.node.Camera).build(RGB_SOCKET)
+        leftCam = self.pipeline.create(dai.node.Camera).build(LEFT_SOCKET)
+        rightCam = self.pipeline.create(dai.node.Camera).build(RIGHT_SOCKET)
+
+        stereo = self.pipeline.create(dai.node.StereoDepth)
+        stereo.setExtendedDisparity(True)
+        stereo.setLeftRightCheck(True)
+
+        colorOut = colorCam.requestOutput(FRAME_SIZE, fps=PUBLISH_HZ)
+        leftOut = leftCam.requestOutput(FRAME_SIZE, fps=PUBLISH_HZ)
+        rightOut = rightCam.requestOutput(FRAME_SIZE, fps=PUBLISH_HZ)
+
+        leftOut.link(stereo.left)
+        rightOut.link(stereo.right)
+        # RVC2 alignment: link the color output as the alignment target
+        # directly (no separate ImageAlign node -- that's only needed on
+        # RVC4). Depth output comes out sized/registered to match colorOut.
+        colorOut.link(stereo.inputAlignTo)
+
+        self.rgb_queue = colorOut.createOutputQueue(maxSize=1, blocking=False)
+        self.depth_queue = stereo.depth.createOutputQueue(maxSize=1, blocking=False)
+
+        self.pipeline.start()
+
+        self.create_timer(1.0 / PUBLISH_HZ, self._publish_frames)
+        self.get_logger().info('OakCameraNode ready — publishing /camera/image_raw and /stereo/depth')
+
+    def _publish_camera_optical_tf(self):
+        t = TransformStamped()
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = 'camera_link'
+        t.child_frame_id = 'camera_optical_frame'
+        t.transform.translation.x = 0.0
+        t.transform.translation.y = 0.0
+        t.transform.translation.z = 0.0
+        # Fixed rotation from mechanical (X-forward, Y-left, Z-up) to
+        # optical (Z-forward, X-right, Y-down) axis conventions.
+        t.transform.rotation.x = -0.5
+        t.transform.rotation.y = 0.5
+        t.transform.rotation.z = -0.5
+        t.transform.rotation.w = 0.5
+        self.static_tf_broadcaster.sendTransform(t)
+
+    def _publish_frames(self):
+        now = self.get_clock().now().to_msg()
+
+        rgb_frame = self.rgb_queue.tryGet()
+        if rgb_frame is not None:
+            cv_rgb = rgb_frame.getCvFrame()
+            rgb_msg = self.bridge.cv2_to_imgmsg(cv_rgb, encoding='bgr8')
+            rgb_msg.header.stamp = now
+            rgb_msg.header.frame_id = 'camera_optical_frame'
+            self.pub_rgb.publish(rgb_msg)
+
+        depth_frame = self.depth_queue.tryGet()
+        if depth_frame is not None:
+            # Task: DepthAI's StereoDepth output comes back as uint16
+            # millimeters, but detector_node.py expects 32FC1 in METERS.
+            # Get the raw frame with depth_frame.getFrame(), convert it to
+            # a float32 array in meters (divide by 1000.0), then build and
+            # publish the Image message the same way rgb_msg was built
+            # above (cv_bridge, encoding='32FC1', same header stamp/frame_id,
+            # publish on self.pub_depth).
+
+            # Your code
+            pass
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = OakCameraNode()
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, rclpy.executors.ExternalShutdownException):
+        pass
+    finally:
+        node.destroy_node()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
+
+
+if __name__ == '__main__':
+    main()
+```
+
+Register in `setup.py`:
+
+```python
+'oak_camera_node = mini_pupper_labs.oak_camera_node:main',
+```
+
+Build (`--parallel-workers 1 --executor sequential` on this CM4), then test in isolation before moving to `detector_node.py`:
+
+```bash
+colcon build --packages-select mini_pupper_labs --symlink-install
+source install/setup.bash
+ros2 run mini_pupper_labs oak_camera_node
+```
+
+In another terminal, confirm both topics publish at a steady rate:
+
+```bash
+ros2 topic hz /camera/image_raw
+ros2 topic hz /stereo/depth
+```
+
+!!! note "Depth accuracy near minimum range"
+    Stereo depth is least accurate close to the camera's minimum sensing
+    range. A hand measured at ~10in (0.254m) read back around 0.22–0.23m —
+    a few cm off. Expect better accuracy at the 1–3m range Step 7's
+    exploration will mostly operate at; this isn't a calibration bug.
+
+### Step 6b — Write `detector_node.py`
 
 This node runs on the PC. It builds on the Week 9 YOLO detector but adds depth-to-map-frame transformation and inventory tracking. Need to install this system package as well.
-
-!!! warning "Camera and depth data source not yet confirmed working"
-    This node subscribes to `/camera/image_raw` and `/stereo/depth`, but nothing in this workspace has been confirmed to publish either one. A related bug (Step 5's original design subscribing to `/camera/image_raw` with zero publishers) was found and fixed for the LCD case by moving to an on-device approach that avoids ROS topics entirely — but `detector_node` fundamentally needs data over the network to do map-frame position tracking, so that workaround doesn't apply here. Before trusting Task 6's output, confirm with `ros2 topic info /camera/image_raw --verbose` and `ros2 topic info /stereo/depth --verbose` that a publisher actually exists. If not, this needs its own fix — likely a dedicated camera+depth driver node on the robot, which also has to coordinate with `oak_detection_publisher` since only one process can hold the OAK-D device at a time. Not yet resolved as of this version of the lab.
 
 ```bash
 pip install ultralytics --break-system-packages
